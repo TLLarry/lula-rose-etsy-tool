@@ -17,6 +17,7 @@ import {
   createPerformanceHandler,
 } from './server/db.js'
 import { createUploadCsvHandler } from './server/csvUpload.js'
+import { createTagScoresHandler } from './server/analysis.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
 // real environment variables set in the dashboard, so there's no .env file
@@ -59,6 +60,7 @@ app.use('/api/db-status', createDbStatusHandler(env, passwordsMatch))
 app.use('/api/upload-csv', createUploadCsvHandler(env))
 app.use('/api/dashboard-summary', createDashboardSummaryHandler(env, passwordsMatch))
 app.use('/api/performance', createPerformanceHandler(env, passwordsMatch))
+app.use('/api/tag-scores', createTagScoresHandler(env, passwordsMatch))
 
 app.use(express.static(distDir))
 

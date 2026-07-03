@@ -215,6 +215,26 @@ function getAvailableMonths() {
     .map((row) => row.month)
 }
 
+// Raw aggregates for a month, with no scoring/classification — that logic
+// lives in server/analysis.js, which is pure JS with no SQL of its own.
+// Assumes the caller has already validated `month` is one that has data.
+function getKeywordAggregatesForMonth(month) {
+  const keywords = db
+    .prepare(
+      `SELECT keyword, SUM(visits) AS visits, SUM(orders) AS orders
+       FROM keyword_stats
+       WHERE month = ?
+       GROUP BY keyword`
+    )
+    .all(month)
+
+  const salesRow = db
+    .prepare(`SELECT COUNT(*) AS count FROM keyword_stats WHERE month = ? AND orders IS NOT NULL`)
+    .get(month)
+
+  return { keywords, hasOrderData: salesRow.count > 0 }
+}
+
 const TOP_KEYWORD_LIMIT = 20
 
 // Keywords are aggregated across sources/uploads within the month (the same
@@ -379,7 +399,9 @@ export {
   getDashboardSummary,
   createDashboardSummaryHandler,
   getAvailableMonths,
+  getKeywordAggregatesForMonth,
   getPerformanceForMonth,
   createPerformanceHandler,
+  checkAppPassword,
   DB_PATH,
 }
