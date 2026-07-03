@@ -6,7 +6,12 @@ import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
-import { createLoginHandler, createGenerateTitleHandler } from './server/listingApi.js'
+import {
+  createLoginHandler,
+  createGenerateTitleHandler,
+  passwordsMatch,
+} from './server/listingApi.js'
+import { createDbStatusHandler } from './server/db.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
 // real environment variables set in the dashboard, so there's no .env file
@@ -45,6 +50,7 @@ const app = express()
 // that raw stream intact).
 app.use('/api/login', createLoginHandler(env))
 app.use('/api/generate-title', createGenerateTitleHandler(env))
+app.use('/api/db-status', createDbStatusHandler(env, passwordsMatch))
 
 app.use(express.static(distDir))
 

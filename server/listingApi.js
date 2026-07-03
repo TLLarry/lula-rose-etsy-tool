@@ -1257,4 +1257,4 @@ function createGenerateTitleHandler(env) {
   }
 }
 
-export { createLoginHandler, createGenerateTitleHandler }
+export { createLoginHandler, createGenerateTitleHandler, passwordsMatch }

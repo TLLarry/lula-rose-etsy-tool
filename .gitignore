@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# Local SQLite database (server/db.js) — ephemeral on Render's free tier
+# anyway; see the comment at the top of server/db.js.
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Environment files
 .env
 .env.local
