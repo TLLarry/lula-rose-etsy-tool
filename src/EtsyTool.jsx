@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react'
+import { CATEGORIES } from './categories.js'
 
+const MAX_CATEGORIES = 3
 const MIN_TITLE_LENGTH = 135
 const MAX_TITLE_LENGTH = 140
 const MAX_TAG_LENGTH = 20
@@ -75,13 +77,12 @@ function EtsyTool() {
   const [images, setImages] = useState([])
   const [imageError, setImageError] = useState('')
   const [facts, setFacts] = useState(EMPTY_FACTS)
-  const [title, setTitle] = useState('')
-  const [tags, setTags] = useState([])
-  const [header, setHeader] = useState('')
-  const [body, setBody] = useState('')
-  const [specs, setSpecs] = useState(null)
-  const [faq, setFaq] = useState([])
-  const [triggerPhrases, setTriggerPhrases] = useState([])
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState([])
+  // Always a map, even with zero categories selected — { default: {...} } for
+  // a single listing, or { <categoryId>: {...}, ... } for variants. Keeping
+  // one shape means the results JSX below never needs two code paths.
+  const [resultVariants, setResultVariants] = useState(null)
+  const [activeVariantKey, setActiveVariantKey] = useState(null)
   const [altTexts, setAltTexts] = useState([])
   const [resultImages, setResultImages] = useState([])
   const [copiedAltIndex, setCopiedAltIndex] = useState(null)
@@ -156,6 +157,14 @@ function EtsyTool() {
     setFacts((prev) => ({ ...prev, [key]: value }))
   }
 
+  const handleCategoryToggle = (id) => {
+    setSelectedCategoryIds((prev) => {
+      if (prev.includes(id)) return prev.filter((selected) => selected !== id)
+      if (prev.length >= MAX_CATEGORIES) return prev
+      return [...prev, id]
+    })
+  }
+
   const handleAltTextChange = (index, value) => {
     setAltTexts((prev) =>
       prev.map((entry, i) => (i === index ? { ...entry, text: value } : entry))
@@ -178,13 +187,8 @@ function EtsyTool() {
   const handleGenerate = async () => {
     setLoading(true)
     setError('')
-    setTitle('')
-    setTags([])
-    setHeader('')
-    setBody('')
-    setSpecs(null)
-    setFaq([])
-    setTriggerPhrases([])
+    setResultVariants(null)
+    setActiveVariantKey(null)
     setAltTexts([])
     setResultImages([])
     try {
@@ -200,19 +204,33 @@ function EtsyTool() {
             name: image.name,
           })),
           ...facts,
+          categories: selectedCategoryIds,
         }),
       })
       const data = await response.json()
       if (!response.ok) {
         throw new Error(data.error || 'Failed to generate listing content.')
       }
-      setTitle(data.title)
-      setTags(Array.isArray(data.tags) ? data.tags : [])
-      setHeader(data.header || '')
-      setBody(data.body || '')
-      setSpecs(data.specs || null)
-      setFaq(Array.isArray(data.faq) ? data.faq : [])
-      setTriggerPhrases(Array.isArray(data.triggerPhrases) ? data.triggerPhrases : [])
+
+      if (data.variants) {
+        setResultVariants(data.variants)
+        const firstKey = selectedCategoryIds.find((id) => data.variants[id]) || Object.keys(data.variants)[0]
+        setActiveVariantKey(firstKey)
+      } else {
+        setResultVariants({
+          default: {
+            title: data.title || '',
+            tags: Array.isArray(data.tags) ? data.tags : [],
+            header: data.header || '',
+            body: data.body || '',
+            specs: data.specs || null,
+            faq: Array.isArray(data.faq) ? data.faq : [],
+            triggerPhrases: Array.isArray(data.triggerPhrases) ? data.triggerPhrases : [],
+          },
+        })
+        setActiveVariantKey('default')
+      }
+
       setAltTexts(
         Array.isArray(data.altText)
           ? data.altText.map((entry) => ({
@@ -231,6 +249,18 @@ function EtsyTool() {
       setLoading(false)
     }
   }
+
+  const activeVariant = resultVariants && activeVariantKey ? resultVariants[activeVariantKey] : null
+  const title = activeVariant?.title || ''
+  const tags = activeVariant?.tags || []
+  const header = activeVariant?.header || ''
+  const body = activeVariant?.body || ''
+  const specs = activeVariant?.specs || null
+  const faq = activeVariant?.faq || []
+  const triggerPhrases = activeVariant?.triggerPhrases || []
+
+  const variantKeys = resultVariants ? Object.keys(resultVariants) : []
+  const showTabs = variantKeys.length > 1
 
   const titleOutOfRange = title.length < MIN_TITLE_LENGTH || title.length > MAX_TITLE_LENGTH
   const headerOutOfRange = header.length < MIN_HEADER_LENGTH || header.length > MAX_HEADER_LENGTH
@@ -324,6 +354,35 @@ function EtsyTool() {
         </div>
       ))}
 
+      <div className="field">
+        <label>
+          Categories (pick up to {MAX_CATEGORIES}, optional — leave blank for one listing)
+        </label>
+        <div className="category-checkboxes">
+          {CATEGORIES.map((category) => {
+            const checked = selectedCategoryIds.includes(category.id)
+            const disabled = !checked && selectedCategoryIds.length >= MAX_CATEGORIES
+            return (
+              <label className="category-checkbox" key={category.id}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={() => handleCategoryToggle(category.id)}
+                />
+                {category.label}
+              </label>
+            )
+          })}
+        </div>
+        {selectedCategoryIds.length > 0 && (
+          <p className="subhead">
+            {selectedCategoryIds.length}/{MAX_CATEGORIES} selected — one full listing variant
+            will be generated per category.
+          </p>
+        )}
+      </div>
+
       <button type="button" onClick={handleGenerate} disabled={!canGenerate}>
         {loading ? 'Generating…' : 'Generate Title'}
       </button>
@@ -332,6 +391,24 @@ function EtsyTool() {
 
       {title && (
         <div className="result">
+          {showTabs && (
+            <div className="variant-tabs">
+              {variantKeys.map((key) => {
+                const category = CATEGORIES.find((candidate) => candidate.id === key)
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`variant-tab${key === activeVariantKey ? ' active' : ''}`}
+                    onClick={() => setActiveVariantKey(key)}
+                  >
+                    {category ? category.label : key}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
           <div className="result-section">
             <h2>Title</h2>
             <p className="title-text">{title}</p>

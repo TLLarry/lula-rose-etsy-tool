@@ -400,3 +400,47 @@ mark {
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+.category-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.field .category-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  color: var(--text-h);
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.variant-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+
+#title-writer .variant-tab {
+  align-self: auto;
+  padding: 6px 14px;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+
+  &:not(:disabled):hover {
+    opacity: 1;
+    border-color: var(--accent-border);
+  }
+}
+
+#title-writer .variant-tab.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}

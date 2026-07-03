@@ -7,6 +7,7 @@
 // server (server.js) without any duplication.
 import Anthropic from '@anthropic-ai/sdk'
 import crypto from 'node:crypto'
+import { CATEGORIES } from '../src/categories.js'
 
 const ALLOWED_IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png']
 const MAX_IMAGES = 20
@@ -18,6 +19,7 @@ const MIN_HEADER_LENGTH = 150
 const MAX_HEADER_LENGTH = 155
 const MAX_ALT_TEXT_LENGTH = 125
 const MAX_FILENAME_LENGTH = 200
+const MAX_CATEGORIES = 3
 
 // Optional seller-confirmed facts. Keys match what the frontend sends;
 // labels are what the model sees when a fact is provided.
@@ -121,6 +123,24 @@ function validateImages(rawImages) {
         : `Image ${index + 1}`
     return { mediaType: image.mediaType, data: image.data, name }
   })
+}
+
+// Defense in depth: the frontend already enforces the 3-category cap and
+// only sends known ids, but this validates again in case it's ever called
+// directly. Unknown ids are dropped rather than rejected, so an edit to
+// src/categories.js can't strand an old cached frontend with a hard error.
+function validateCategories(rawCategories) {
+  if (rawCategories === undefined || rawCategories === null) return []
+  if (!Array.isArray(rawCategories)) {
+    throw new RequestError(400, 'Categories must be provided as a list.')
+  }
+  const unique = [...new Set(rawCategories)]
+  if (unique.length > MAX_CATEGORIES) {
+    throw new RequestError(400, `You can select up to ${MAX_CATEGORIES} categories.`)
+  }
+  const validIds = new Set(CATEGORIES.map((category) => category.id))
+  const ids = unique.filter((id) => typeof id === 'string' && validIds.has(id))
+  return ids.map((id) => CATEGORIES.find((category) => category.id === id))
 }
 
 function buildImageContentBlocks(images) {
@@ -706,6 +726,418 @@ async function generateListingExtras(apiKey, description, keywords, title, image
   }
 }
 
+// ==================== CATEGORY VARIANTS (up to 3) ====================
+// Entirely separate from generateTitle/generateListingExtras above — when
+// zero categories are selected the endpoint handler calls those, unchanged,
+// exactly as before. This section only runs when the seller picked 1-3
+// categories, and produces all variants in ONE Claude call (never one call
+// per category), reusing the same enforceTitleLength/enforceTagLength/
+// reconcileTags helpers already defined above.
+
+const CATEGORY_VARIANTS_SYSTEM_PROMPT = `You are an Etsy SEO assistant. The seller is listing the SAME physical product under up to 3 different Etsy categories, and needs one complete, tailored listing variant per category — all generated together in a single JSON response.
+
+You will be given a product description and/or product photos, optional seller keywords, and a list of categories (each as its full Etsy breadcrumb path, e.g. "Paper & Party Supplies > Party Décor > Balloons"). Return ONE complete variant per category, keyed by the category id you were given.
+
+CRITICAL — how variants must differ: every variant describes the exact same honest, real product. Never invent different materials, features, or facts between variants, and never introduce vocabulary that isn't grounded in the product description, photos, or seller-provided facts. Instead, RE-SEQUENCE and RE-MIX the same core pool of keywords: each variant gets a different front-loaded primary keyword matched to ITS OWN category, a different phrase order, and different tag emphasis, so the same truthful product reads naturally to a buyer browsing that specific category. For example, a variant angled at a party/balloon category should front-load party/balloon terms; a variant angled at a baked-goods category should front-load the relevant baked-goods terms — but every variant must still describe the exact same real product.
+
+You may be given one or more product photos. When photos are included, treat them as the primary source of truth — look closely at what is actually pictured (materials, color, construction, style, condition) and let that inform every variant equally. Use any text description only as supporting context. Each photo is preceded by a label like "Image 3 (filename: photo3.jpg):" so you know its position and original filename — use that exact index and filename in ALT TEXT.
+
+You may also be given SELLER-PROVIDED FACTS — exact, seller-confirmed details (size/dimensions, inflation type, materials, turnaround time, shipping/pickup). These are ground truth and apply to EVERY variant identically: you MUST use each provided fact exactly as given, everywhere relevant, and must NEVER invent a different value, contradict it, or soften it into a vague generality in any variant. If a fact is NOT provided, describe that aspect generally, or omit it — never guess a specific number, material, or timeframe.
+
+Return a single JSON object with exactly these fields: "variants" (an object with one key per category id given, each holding a complete variant) and "altText".
+
+Apply ALL of the following rules to EVERY variant independently:
+
+TITLE (string):
+1. Front-load THIS VARIANT's own primary keyword — matched to its category — within the first 40 characters.
+2. Separate distinct keyword phrases with a comma and a space (", "). Never use the "|" pipe character.
+3. The title MUST be between 135 and 140 characters, inclusive. This is a hard requirement, not a rough target — under 135 characters is NEVER acceptable, and over 140 characters is NEVER acceptable. Count the characters as you write.
+4. Do not keyword-stuff — each phrase must read naturally and describe a real attribute, use, or audience. Do not repeat the same word across multiple phrases within one title.
+
+TAGS (array of exactly 13 strings):
+- Exactly 13 tags, every one a multi-word phrase (never a single word), 20 characters or fewer each — hard limit, no exceptions.
+- All 13 unique within this variant. Don't repeat exact phrases already in THIS variant's own title.
+- Different variants should emphasize different tags from the shared keyword pool (re-sequenced and re-mixed, not reinvented) — avoid making every variant's tag list nearly identical.
+
+HEADER (string):
+- One complete, natural-reading sentence built around THIS VARIANT's own front-loaded keyword, written like a Google search snippet.
+- The header MUST be between 150 and 155 characters, inclusive. Under 150 characters is NEVER acceptable, over 155 characters is NEVER acceptable. Count the characters as you write and adjust wording until it lands in that exact range.
+
+BODY (string):
+- Flows from the header, expands the product story angled at this category's buyer, weaves in keyword variations naturally, matches any SELLER-PROVIDED FACTS exactly (never a different value), and naturally includes a few buyer-intent trigger phrases ("Best for," "Perfect for," "Great gift for," "Ideal if," "Works for") where they genuinely fit — never forced, never stacked more than one per sentence, never a keyword list.
+
+SPECS (object with exactly these six string fields: whatYouGet, whoItsFor, howItWorks, sizingOrMaterials, turnaroundTime, howToOrder):
+- Same factual product content as every other variant, but whoItsFor may reasonably lean toward this variant's category audience. Any SELLER-PROVIDED FACT must be reflected exactly, same as BODY. Keep every value short and scannable.
+
+FAQ (array of exactly 5 objects, each with a "question" and an "answer" string):
+- The 5 questions most relevant to this variant's audience; answers short, concrete, and factual, matching any SELLER-PROVIDED FACTS exactly.
+
+TRIGGER PHRASES (array of 3 to 6 strings):
+- The exact sentence fragments actually used in THIS variant's body, copied verbatim — never invent one that isn't actually in the text.
+
+ALT TEXT (array, generated ONCE — shared across all variants, not duplicated per variant):
+- One object per uploaded photo, in upload order, shaped { "index": <1-based image number>, "filename": "<exact filename from the photo's label>", "altText": "<description>" }.
+- Describes what is specifically visible in THAT photo (angle, setting, detail) — never the category, never the listing title. Never start with "Image of," "Photo of," "Picture of," or similar.
+- Hard cap of 125 characters. If no photos were provided, return an empty array.
+
+Respond with ONLY the JSON object — no markdown fences, no commentary.`
+
+function buildVariantResultSchema() {
+  return {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      tags: { type: 'array', items: { type: 'string' } },
+      header: { type: 'string' },
+      body: { type: 'string' },
+      specs: {
+        type: 'object',
+        properties: {
+          whatYouGet: { type: 'string' },
+          whoItsFor: { type: 'string' },
+          howItWorks: { type: 'string' },
+          sizingOrMaterials: { type: 'string' },
+          turnaroundTime: { type: 'string' },
+          howToOrder: { type: 'string' },
+        },
+        required: [
+          'whatYouGet',
+          'whoItsFor',
+          'howItWorks',
+          'sizingOrMaterials',
+          'turnaroundTime',
+          'howToOrder',
+        ],
+        additionalProperties: false,
+      },
+      faq: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            question: { type: 'string' },
+            answer: { type: 'string' },
+          },
+          required: ['question', 'answer'],
+          additionalProperties: false,
+        },
+      },
+      triggerPhrases: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+    },
+    required: ['title', 'tags', 'header', 'body', 'specs', 'faq', 'triggerPhrases'],
+    additionalProperties: false,
+  }
+}
+
+function buildVariantsSchema(categories) {
+  const properties = {}
+  const required = []
+  categories.forEach((category) => {
+    properties[category.id] = buildVariantResultSchema()
+    required.push(category.id)
+  })
+
+  return {
+    type: 'object',
+    properties: {
+      variants: {
+        type: 'object',
+        properties,
+        required,
+        additionalProperties: false,
+      },
+      altText: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            index: { type: 'integer' },
+            filename: { type: 'string' },
+            altText: { type: 'string' },
+          },
+          required: ['index', 'filename', 'altText'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['variants', 'altText'],
+    additionalProperties: false,
+  }
+}
+
+function buildVariantUserPrompt(description, keywords, facts, categories, hasImages) {
+  const parts = []
+  const categoryLines = categories.map(
+    (category, index) => `${index + 1}. id: "${category.id}" — category path: ${category.path}`
+  )
+  parts.push(
+    `Generate one variant per category below, keyed by the given id:\n${categoryLines.join('\n')}`
+  )
+
+  const factsBlock = buildSellerFactsBlock(facts)
+  if (factsBlock) parts.push(factsBlock)
+
+  const hasDescription = Boolean(description && description.trim())
+  if (hasImages && !hasDescription) {
+    parts.push(
+      'No text description was provided. Base every variant entirely on what you see in the attached photo(s).'
+    )
+  }
+  if (hasDescription) parts.push(`Product description: ${description}`)
+  if (keywords && keywords.trim()) parts.push(`Seller-provided keywords: ${keywords.trim()}`)
+
+  return parts.join('\n\n')
+}
+
+function buildVariantContent(description, keywords, images, facts, categories) {
+  const imageBlocks = buildLabeledImageContentBlocks(images)
+  const textPrompt = buildVariantUserPrompt(
+    description,
+    keywords,
+    facts,
+    categories,
+    images.length > 0
+  )
+  return [...imageBlocks, { type: 'text', text: textPrompt }]
+}
+
+const VARIANT_CORRECTIONS_SYSTEM_PROMPT = `You are fixing specific problems in already-generated Etsy listing variants, one or more of which are out of range. You will be told exactly what is wrong, per category, and must return ONLY the corrected value(s) for each flagged category — do not regenerate or change anything that wasn't flagged.
+
+If asked to fix a title: rewrite it to be between 135 and 140 characters, inclusive — under 135 or over 140 is NEVER acceptable. Keep the same front-loaded primary keyword and comma-separated phrase style.
+
+If asked to fix a header: return one complete, natural-reading sentence between 150 and 155 characters, inclusive — under 150 or over 155 is NEVER acceptable.
+
+If asked to fix tags: for each flagged position, return a new multi-word phrase (never a single word) of 20 characters or fewer that is not a duplicate of any other tag in that variant, and is a genuine, relevant Etsy search term for this product — not filler.
+
+Respond with ONLY the JSON object — no markdown fences, no commentary.`
+
+function buildVariantCorrectionSchema(issues) {
+  const properties = {}
+  const required = []
+  issues.forEach(({ categoryId, titleNeedsFix, headerNeedsFix, tagIssues }) => {
+    const categoryProperties = {}
+    const categoryRequired = []
+    if (titleNeedsFix) {
+      categoryProperties.title = { type: 'string' }
+      categoryRequired.push('title')
+    }
+    if (headerNeedsFix) {
+      categoryProperties.header = { type: 'string' }
+      categoryRequired.push('header')
+    }
+    if (tagIssues.length > 0) {
+      categoryProperties.tags = {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            index: { type: 'integer' },
+            value: { type: 'string' },
+          },
+          required: ['index', 'value'],
+          additionalProperties: false,
+        },
+      }
+      categoryRequired.push('tags')
+    }
+    properties[categoryId] = {
+      type: 'object',
+      properties: categoryProperties,
+      required: categoryRequired,
+      additionalProperties: false,
+    }
+    required.push(categoryId)
+  })
+  return { type: 'object', properties, required, additionalProperties: false }
+}
+
+function buildVariantCorrectionUserPrompt({ description, keywords, categories, issues }) {
+  const parts = []
+  if (description && description.trim()) parts.push(`Product description: ${description}`)
+  if (keywords && keywords.trim()) parts.push(`Keywords: ${keywords}`)
+
+  issues.forEach(({ categoryId, titleNeedsFix, title, headerNeedsFix, header, tagIssues }) => {
+    const category = categories.find((candidate) => candidate.id === categoryId)
+    const lines = [`Category "${categoryId}" (${category ? category.path : categoryId}):`]
+    if (titleNeedsFix) {
+      lines.push(
+        `- Title is ${title.length} characters: "${title}". Rewrite to 135-140 characters, keeping the same front-loaded primary keyword and comma-separated style.`
+      )
+    }
+    if (headerNeedsFix) {
+      lines.push(
+        `- Header is ${header.length} characters: "${header}". Rewrite to 150-155 characters.`
+      )
+    }
+    if (tagIssues.length > 0) {
+      lines.push('- Tags needing replacement:')
+      tagIssues.forEach(({ index, tag }) => {
+        lines.push(
+          `  - Position ${index + 1}: current tag "${tag}" (${tag.length} characters) is over the 20-character limit and can't be shortened cleanly. Provide a compliant replacement.`
+        )
+      })
+    }
+    parts.push(lines.join('\n'))
+  })
+
+  return parts.join('\n\n')
+}
+
+// One combined retry covering every out-of-range field across every
+// variant, in a single call — never one retry per category.
+async function retryVariantCorrections(apiKey, context) {
+  if (context.issues.length === 0) return {}
+
+  const client = new Anthropic({ apiKey })
+  const response = await client.messages.create({
+    model: 'claude-opus-4-8',
+    max_tokens: 1500,
+    output_config: {
+      effort: 'medium',
+      format: {
+        type: 'json_schema',
+        schema: buildVariantCorrectionSchema(context.issues),
+      },
+    },
+    system: VARIANT_CORRECTIONS_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: buildVariantCorrectionUserPrompt(context) }],
+  })
+
+  const textBlock = response.content.find((block) => block.type === 'text')
+  if (!textBlock) return {}
+  try {
+    return JSON.parse(textBlock.text)
+  } catch {
+    return {}
+  }
+}
+
+async function generateCategoryVariants(apiKey, description, keywords, images, facts, categories) {
+  if (!apiKey) {
+    throw new Error(
+      'ANTHROPIC_API_KEY is not set. Copy .env.example to .env and fill it in.'
+    )
+  }
+
+  const client = new Anthropic({ apiKey })
+  const response = await client.messages.create({
+    model: 'claude-opus-4-8',
+    max_tokens: 4000 + categories.length * 3500,
+    output_config: {
+      effort: 'medium',
+      format: { type: 'json_schema', schema: buildVariantsSchema(categories) },
+    },
+    system: CATEGORY_VARIANTS_SYSTEM_PROMPT,
+    messages: [
+      {
+        role: 'user',
+        content: buildVariantContent(description, keywords, images, facts, categories),
+      },
+    ],
+  })
+
+  const textBlock = response.content.find((block) => block.type === 'text')
+  if (!textBlock) {
+    throw new Error('Claude did not return listing variants.')
+  }
+
+  const parsed = JSON.parse(textBlock.text)
+  const rawVariants = parsed.variants && typeof parsed.variants === 'object' ? parsed.variants : {}
+
+  // Deterministic enforcement, per variant — same rules and helpers as the
+  // single-listing path above, just looped across categories.
+  const variants = {}
+  const allIssues = []
+
+  categories.forEach((category) => {
+    const raw = rawVariants[category.id] || {}
+    const title = enforceTitleLength(
+      typeof raw.title === 'string' ? raw.title.trim().replace(/^["']|["']$/g, '') : ''
+    )
+    const { finalTags, needsRetry: tagIssues } = reconcileTags(
+      Array.isArray(raw.tags) ? raw.tags : []
+    )
+    const header = typeof raw.header === 'string' ? raw.header : ''
+
+    const titleNeedsFix = title.length < MIN_TITLE_LENGTH
+    const headerNeedsFix = header.length < MIN_HEADER_LENGTH || header.length > MAX_HEADER_LENGTH
+
+    variants[category.id] = {
+      title,
+      tags: finalTags,
+      header,
+      body: typeof raw.body === 'string' ? raw.body : '',
+      specs:
+        raw.specs && typeof raw.specs === 'object'
+          ? { ...EMPTY_SPECS, ...raw.specs }
+          : EMPTY_SPECS,
+      faq: Array.isArray(raw.faq)
+        ? raw.faq
+            .filter((item) => item && typeof item.question === 'string')
+            .map((item) => ({
+              question: item.question,
+              answer: typeof item.answer === 'string' ? item.answer : '',
+            }))
+        : [],
+      triggerPhrases: Array.isArray(raw.triggerPhrases) ? raw.triggerPhrases : [],
+    }
+
+    if (titleNeedsFix || headerNeedsFix || tagIssues.length > 0) {
+      allIssues.push({ categoryId: category.id, titleNeedsFix, title, headerNeedsFix, header, tagIssues })
+    }
+  })
+
+  if (allIssues.length > 0) {
+    const corrections = await retryVariantCorrections(apiKey, {
+      description,
+      keywords,
+      categories,
+      issues: allIssues,
+    })
+
+    allIssues.forEach(({ categoryId, titleNeedsFix, headerNeedsFix, tagIssues }) => {
+      const fix = corrections[categoryId]
+      if (!fix) return
+
+      if (titleNeedsFix && typeof fix.title === 'string' && fix.title.trim()) {
+        variants[categoryId].title = enforceTitleLength(
+          fix.title.trim().replace(/^["']|["']$/g, '')
+        )
+      }
+      if (headerNeedsFix && typeof fix.header === 'string' && fix.header.trim()) {
+        variants[categoryId].header = fix.header.trim()
+      }
+      if (tagIssues.length > 0 && Array.isArray(fix.tags)) {
+        fix.tags.forEach((correction) => {
+          if (
+            correction &&
+            typeof correction.index === 'number' &&
+            variants[categoryId].tags[correction.index] !== undefined &&
+            typeof correction.value === 'string' &&
+            correction.value.trim()
+          ) {
+            variants[categoryId].tags[correction.index] = correction.value.trim()
+          }
+        })
+      }
+    })
+  }
+
+  // Absolute guarantee across every variant, regardless of retry outcome —
+  // the UI must never see a tag over 20 chars in any tab.
+  categories.forEach((category) => {
+    variants[category.id].tags = variants[category.id].tags.map((tag) => enforceTagLength(tag))
+  })
+
+  return {
+    variants,
+    altText: reconcileAltText(images, parsed.altText),
+  }
+}
+
 // Route handler factories — `env` needs ANTHROPIC_API_KEY and APP_PASSWORD.
 // Both handlers are plain `(req, res) => Promise<void>` Node middleware, so
 // they mount identically under Vite's `server.middlewares.use(path, handler)`
@@ -757,6 +1189,7 @@ function createGenerateTitleHandler(env) {
         materials,
         turnaround,
         shippingPickup,
+        categories: rawCategories,
       } = await readJsonBody(req)
       const images = validateImages(rawImages)
       const facts = sanitizeFacts({
@@ -766,6 +1199,7 @@ function createGenerateTitleHandler(env) {
         turnaround,
         shippingPickup,
       })
+      const categories = validateCategories(rawCategories)
 
       if ((!description || !description.trim()) && images.length === 0) {
         throw new RequestError(
@@ -774,27 +1208,46 @@ function createGenerateTitleHandler(env) {
         )
       }
 
-      const title = await generateTitle(env.ANTHROPIC_API_KEY, description, keywords, images)
-      const extras = await generateListingExtras(
+      if (categories.length === 0) {
+        // Unchanged from before category variants existed.
+        const title = await generateTitle(env.ANTHROPIC_API_KEY, description, keywords, images)
+        const extras = await generateListingExtras(
+          env.ANTHROPIC_API_KEY,
+          description,
+          keywords,
+          title,
+          images,
+          facts
+        )
+        res.end(
+          JSON.stringify({
+            title,
+            tags: extras.tags,
+            header: extras.header,
+            body: extras.body,
+            specs: extras.specs,
+            faq: extras.faq,
+            triggerPhrases: extras.triggerPhrases,
+            // Omitted entirely (not even an empty array) when no images
+            // were uploaded, regardless of what the model returned.
+            ...(images.length > 0 ? { altText: extras.altText } : {}),
+          })
+        )
+        return
+      }
+
+      const result = await generateCategoryVariants(
         env.ANTHROPIC_API_KEY,
         description,
         keywords,
-        title,
         images,
-        facts
+        facts,
+        categories
       )
       res.end(
         JSON.stringify({
-          title,
-          tags: extras.tags,
-          header: extras.header,
-          body: extras.body,
-          specs: extras.specs,
-          faq: extras.faq,
-          triggerPhrases: extras.triggerPhrases,
-          // Omitted entirely (not even an empty array) when no images
-          // were uploaded, regardless of what the model returned.
-          ...(images.length > 0 ? { altText: extras.altText } : {}),
+          variants: result.variants,
+          ...(images.length > 0 ? { altText: result.altText } : {}),
         })
       )
     } catch (err) {
