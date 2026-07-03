@@ -19,7 +19,7 @@ function LoginScreen({ onSuccess }) {
       if (!response.ok) {
         throw new Error(data.error || 'Incorrect password.')
       }
-      onSuccess()
+      onSuccess(password)
     } catch (err) {
       setError(err.message)
     } finally {

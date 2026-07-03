@@ -12,6 +12,7 @@ import {
   passwordsMatch,
 } from './server/listingApi.js'
 import { createDbStatusHandler } from './server/db.js'
+import { createUploadCsvHandler } from './server/csvUpload.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
 // real environment variables set in the dashboard, so there's no .env file
@@ -51,6 +52,7 @@ const app = express()
 app.use('/api/login', createLoginHandler(env))
 app.use('/api/generate-title', createGenerateTitleHandler(env))
 app.use('/api/db-status', createDbStatusHandler(env, passwordsMatch))
+app.use('/api/upload-csv', createUploadCsvHandler(env))
 
 app.use(express.static(distDir))
 

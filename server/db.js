@@ -110,6 +110,13 @@ function listUploads() {
   return db.prepare(`SELECT * FROM uploads ORDER BY uploaded_at DESC`).all()
 }
 
+function saveUpload({ filename, rowCount, source }) {
+  const result = db
+    .prepare(`INSERT INTO uploads (filename, row_count, source) VALUES (?, ?, ?)`)
+    .run(filename, rowCount ?? null, source ?? null)
+  return result.lastInsertRowid
+}
+
 // Table names are from the fixed internal list above, never from request
 // input, so interpolating them into SQL here is not an injection risk.
 function getDbStatus() {
@@ -168,6 +175,7 @@ export {
   saveKeywordStats,
   getKeywordStats,
   listUploads,
+  saveUpload,
   getDbStatus,
   createDbStatusHandler,
   DB_PATH,

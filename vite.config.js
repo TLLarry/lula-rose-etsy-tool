@@ -6,6 +6,7 @@ import {
   passwordsMatch,
 } from './server/listingApi.js'
 import { createDbStatusHandler } from './server/db.js'
+import { createUploadCsvHandler } from './server/csvUpload.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -14,6 +15,7 @@ function etsyTitleWriterPlugin(env) {
       server.middlewares.use('/api/login', createLoginHandler(env))
       server.middlewares.use('/api/generate-title', createGenerateTitleHandler(env))
       server.middlewares.use('/api/db-status', createDbStatusHandler(env, passwordsMatch))
+      server.middlewares.use('/api/upload-csv', createUploadCsvHandler(env))
     },
   }
 }
