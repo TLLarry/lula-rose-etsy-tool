@@ -13,6 +13,7 @@ import {
 import { createUploadCsvHandler } from './server/csvUpload.js'
 import { createTagScoresHandler, createTrendsHandler } from './server/analysis.js'
 import { createCalendarHandler } from './server/calendar.js'
+import { createSendTestEmailHandler } from './server/reminders.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -30,6 +31,10 @@ function etsyTitleWriterPlugin(env) {
       server.middlewares.use('/api/tag-scores', createTagScoresHandler(env, passwordsMatch))
       server.middlewares.use('/api/trends', createTrendsHandler(env, passwordsMatch))
       server.middlewares.use('/api/calendar', createCalendarHandler(env, passwordsMatch))
+      server.middlewares.use(
+        '/api/send-test-email',
+        createSendTestEmailHandler(env, passwordsMatch)
+      )
     },
   }
 }

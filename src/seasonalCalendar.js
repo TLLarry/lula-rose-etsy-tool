@@ -8,15 +8,17 @@
 // Each entry:
 // - id: stable key, lowercase, no spaces.
 // - name: display name.
-// - month, day: the calendar date to plan around, for fixed-date
+// - month, day: the calendar date to plan around, for FIXED-date
 //   holidays (e.g. Halloween is always 10/31).
-// - computeDate(year): for holidays that move year to year (Easter,
-//   Mother's/Father's Day, Thanksgiving), a function returning
-//   { month, day } for a given year — use nthWeekdayOfMonth() or
-//   getEasterDate() below instead of hardcoding month/day.
-// - windowDays: for events that span a range rather than a single day
-//   (e.g. graduation season), how many days the window runs from the
-//   anchor date. Omit for single-day events.
+// - computeDate(year): for FLOATING holidays that move year to year
+//   (Easter, Mother's/Father's Day, Thanksgiving, National Donut Day,
+//   Labor Day, Black Friday), a function returning { month, day } for a
+//   given year — use nthWeekdayOfMonth() or getEasterDate() below
+//   instead of hardcoding month/day.
+// - windowDays: for WINDOW events that span a range rather than a single
+//   day (e.g. graduation season, wedding season, back to school), how
+//   many days the window runs from the anchor date. Omit for
+//   single-day events.
 // - categories: which of this shop's product categories this event
 //   touches — matches the ids in src/categories.js.
 // - leadTimeWeeks: how many weeks before the event a listing should
@@ -26,10 +28,24 @@
 //   / Q2 Apr-Jun / Q3 Jul-Sep / Q4 Oct-Dec definition already used by
 //   the trends engine (server/analysis.js, monthsInQuarter) — note that
 //   an event's SHOPPING quarter can differ from its calendar quarter
-//   (New Year's Day is 1/1, but the shopping lead-up is Q4).
+//   (New Year's Eve is 12/31, but the shopping lead-up starts in Q4).
 // - recurring: 'year-round' for evergreen occasions with no fixed date
-//   (birthdays, baby showers, weddings) — these always show as "always
-//   in season" rather than a countdown.
+//   (birthdays, baby showers, gender reveals, weddings, bridal showers)
+//   — these always show as "always in season" rather than a countdown.
+//
+// A note on a couple of judgment calls in this seed list:
+// - "Wedding season" is modeled as ONE continuous window (May through
+//   September) rather than two separate "start" and "peak" entries,
+//   since that's the same underlying real-world season — split it back
+//   into two if you'd rather get a distinct nudge at each point.
+// - "New Year loops": no separate entry needed for the turn of the year
+//   past Christmas — New Year's Eve/Day below already rolls forward to
+//   next year's occurrence once this year's has passed (see
+//   server/calendar.js), so the cycle repeats on its own.
+// - First Day of Spring/Summer/Fall use a fixed mid-range approximation
+//   (the real equinox/solstice date shifts by a day or two year to
+//   year) — precise enough for planning purposes; adjust if you want
+//   exact astronomical dates for a given year.
 
 // month: 1-12, weekday: 0=Sunday..6=Saturday, n: 1st/2nd/3rd/4th
 // occurrence of that weekday in the month.
@@ -60,13 +76,28 @@ export function getEasterDate(year) {
   return { month, day }
 }
 
+// Thanksgiving (US): 4th Thursday of November.
+export function getThanksgivingDate(year) {
+  return nthWeekdayOfMonth(year, 11, 4, 4)
+}
+
+// Black Friday: the day after Thanksgiving.
+function getBlackFridayDate(year) {
+  const thanksgiving = getThanksgivingDate(year)
+  const date = new Date(year, thanksgiving.month - 1, thanksgiving.day)
+  date.setDate(date.getDate() + 1)
+  return { month: date.getMonth() + 1, day: date.getDate() }
+}
+
 export const SEASONAL_EVENTS = [
+  // ---- Q1: Jan-Mar ----
   {
-    id: 'new-years',
-    name: "New Year's Day",
-    month: 1,
-    day: 1,
-    categories: ['balloons'],
+    id: 'new-years-eve-day',
+    name: "New Year's Eve/Day",
+    month: 12,
+    day: 31,
+    windowDays: 1, // covers both Eve (12/31) and Day (1/1)
+    categories: ['balloons', 'cupcakes'],
     leadTimeWeeks: 6,
     quarter: 'Q4/Q1',
   },
@@ -80,6 +111,24 @@ export const SEASONAL_EVENTS = [
     quarter: 'Q1',
   },
   {
+    id: 'st-patricks-day',
+    name: "St. Patrick's Day",
+    month: 3,
+    day: 17,
+    categories: ['balloons', 'cookies', 'cupcakes'],
+    leadTimeWeeks: 4,
+    quarter: 'Q1',
+  },
+  {
+    id: 'first-day-of-spring',
+    name: 'First Day of Spring',
+    month: 3,
+    day: 20,
+    categories: ['balloons'],
+    leadTimeWeeks: 3,
+    quarter: 'Q1',
+  },
+  {
     id: 'easter',
     name: 'Easter',
     computeDate: (year) => getEasterDate(year),
@@ -87,12 +136,23 @@ export const SEASONAL_EVENTS = [
     leadTimeWeeks: 6,
     quarter: 'Q1/Q2',
   },
+
+  // ---- Q2: Apr-Jun ----
   {
     id: 'mothers-day',
     name: "Mother's Day",
     computeDate: (year) => nthWeekdayOfMonth(year, 5, 0, 2), // 2nd Sunday of May
     categories: ['balloons', 'cakes', 'cupcakes'],
     leadTimeWeeks: 6,
+    quarter: 'Q2',
+  },
+  {
+    id: 'teacher-appreciation-end-of-school',
+    name: 'Teacher Appreciation / End of School',
+    computeDate: (year) => nthWeekdayOfMonth(year, 5, 1, 1), // 1st Monday of May
+    windowDays: 35, // runs through end-of-school timing in late May/early June
+    categories: ['balloons', 'cookies', 'cupcakes'],
+    leadTimeWeeks: 5,
     quarter: 'Q2',
   },
   {
@@ -106,6 +166,14 @@ export const SEASONAL_EVENTS = [
     quarter: 'Q2',
   },
   {
+    id: 'national-donut-day',
+    name: 'National Donut Day',
+    computeDate: (year) => nthWeekdayOfMonth(year, 6, 5, 1), // 1st Friday of June
+    categories: ['cookies', 'pastries'],
+    leadTimeWeeks: 3,
+    quarter: 'Q2',
+  },
+  {
     id: 'fathers-day',
     name: "Father's Day",
     computeDate: (year) => nthWeekdayOfMonth(year, 6, 0, 3), // 3rd Sunday of June
@@ -113,6 +181,65 @@ export const SEASONAL_EVENTS = [
     leadTimeWeeks: 4,
     quarter: 'Q2',
   },
+  {
+    id: 'first-day-of-summer',
+    name: 'First Day of Summer',
+    month: 6,
+    day: 20,
+    categories: ['balloons'],
+    leadTimeWeeks: 3,
+    quarter: 'Q2',
+  },
+  {
+    id: 'wedding-season',
+    name: 'Wedding Season',
+    month: 5,
+    day: 1,
+    windowDays: 153, // May 1 through Sep 30 - spans Q2/Q3
+    categories: ['balloons', 'cookies', 'cakes', 'cupcakes', 'pastries'],
+    leadTimeWeeks: 8,
+    quarter: 'Q2/Q3',
+  },
+
+  // ---- Q3: Jul-Sep ----
+  {
+    id: 'fourth-of-july',
+    name: 'Fourth of July',
+    month: 7,
+    day: 4,
+    categories: ['balloons', 'cookies', 'cupcakes'],
+    leadTimeWeeks: 5,
+    quarter: 'Q3',
+  },
+  {
+    id: 'back-to-school',
+    name: 'Back to School',
+    month: 8,
+    day: 1,
+    windowDays: 30,
+    categories: ['balloons', 'cookies', 'cupcakes'],
+    leadTimeWeeks: 6,
+    quarter: 'Q3',
+  },
+  {
+    id: 'labor-day',
+    name: 'Labor Day',
+    computeDate: (year) => nthWeekdayOfMonth(year, 9, 1, 1), // 1st Monday of September
+    categories: ['balloons'],
+    leadTimeWeeks: 3,
+    quarter: 'Q3',
+  },
+  {
+    id: 'first-day-of-fall',
+    name: 'First Day of Fall',
+    month: 9,
+    day: 22,
+    categories: ['balloons'],
+    leadTimeWeeks: 3,
+    quarter: 'Q3',
+  },
+
+  // ---- Q4: Oct-Dec ----
   {
     id: 'halloween',
     name: 'Halloween',
@@ -125,9 +252,18 @@ export const SEASONAL_EVENTS = [
   {
     id: 'thanksgiving',
     name: 'Thanksgiving',
-    computeDate: (year) => nthWeekdayOfMonth(year, 11, 4, 4), // 4th Thursday of November
+    computeDate: (year) => getThanksgivingDate(year),
     categories: ['cookies', 'cakes', 'cupcakes', 'pastries'],
     leadTimeWeeks: 6,
+    quarter: 'Q4',
+  },
+  {
+    id: 'black-friday-small-business-saturday',
+    name: 'Black Friday / Small Business Saturday',
+    computeDate: (year) => getBlackFridayDate(year),
+    windowDays: 1, // covers both Black Friday and the Saturday after
+    categories: ['balloons', 'cookies', 'cakes', 'cupcakes', 'pastries'],
+    leadTimeWeeks: 8,
     quarter: 'Q4',
   },
   {
@@ -139,6 +275,8 @@ export const SEASONAL_EVENTS = [
     leadTimeWeeks: 10,
     quarter: 'Q4',
   },
+
+  // ---- Evergreen: always relevant, no single date ----
   {
     id: 'birthdays',
     name: 'Birthdays',
@@ -154,10 +292,24 @@ export const SEASONAL_EVENTS = [
     quarter: 'Q1/Q2/Q3/Q4',
   },
   {
+    id: 'gender-reveals',
+    name: 'Gender Reveals',
+    recurring: 'year-round',
+    categories: ['balloons', 'cupcakes', 'cookies'],
+    quarter: 'Q1/Q2/Q3/Q4',
+  },
+  {
     id: 'weddings',
     name: 'Weddings',
     recurring: 'year-round',
     categories: ['balloons', 'cookies', 'cakes', 'cupcakes', 'pastries'],
+    quarter: 'Q1/Q2/Q3/Q4',
+  },
+  {
+    id: 'bridal-showers',
+    name: 'Bridal Showers',
+    recurring: 'year-round',
+    categories: ['balloons', 'cookies', 'cupcakes', 'cakes'],
     quarter: 'Q1/Q2/Q3/Q4',
   },
 ]

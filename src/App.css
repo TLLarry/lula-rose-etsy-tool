@@ -969,3 +969,41 @@ mark {
     margin-bottom: 4px;
   }
 }
+
+#calendar-page button {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 9px 18px;
+  border-radius: 8px;
+  border: none;
+  color: #fff;
+  background: var(--accent);
+  cursor: pointer;
+  transition: opacity 0.2s;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  &:not(:disabled):hover {
+    opacity: 0.9;
+  }
+}
+
+.calendar-test-email {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.calendar-test-success {
+  color: var(--text-h);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+}

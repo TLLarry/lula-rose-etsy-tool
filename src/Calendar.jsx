@@ -23,6 +23,9 @@ function Calendar({ password }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [sendingTest, setSendingTest] = useState(false)
+  const [testResult, setTestResult] = useState(null)
+  const [testError, setTestError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -46,6 +49,25 @@ function Calendar({ password }) {
     }
   }, [password])
 
+  const handleSendTestReminder = async () => {
+    setSendingTest(true)
+    setTestResult(null)
+    setTestError('')
+    try {
+      const response = await fetch('/api/send-test-email', {
+        method: 'POST',
+        headers: { 'x-app-password': password },
+      })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || 'Failed to send the test reminder.')
+      setTestResult(body)
+    } catch (err) {
+      setTestError(err.message)
+    } finally {
+      setSendingTest(false)
+    }
+  }
+
   const allDated = data ? [...data.prepNow, ...data.comingUp] : []
   const byQuarter = QUARTERS.map((quarter) => ({
     quarter,
@@ -59,6 +81,18 @@ function Calendar({ password }) {
         Seasonal planning — when to start listing for what's coming up. Purely informational,
         based on {data ? data.today : 'today'} and the events in src/seasonalCalendar.js.
       </p>
+
+      <div className="calendar-test-email">
+        <button type="button" onClick={handleSendTestReminder} disabled={sendingTest}>
+          {sendingTest ? 'Sending…' : 'Send me a test reminder'}
+        </button>
+        {testError && <p className="error">{testError}</p>}
+        {testResult && (
+          <p className="calendar-test-success">
+            Sent "{testResult.subject}" to {testResult.to} (based on {testResult.eventName}).
+          </p>
+        )}
+      </div>
 
       {error && <p className="error">{error}</p>}
       {loading && <p className="subhead">Loading…</p>}
