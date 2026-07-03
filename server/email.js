@@ -1,42 +1,23 @@
-// Transactional email sending.
-//
-// IMPORTANT NAMING NOTE: the core MailerLite API (connect.mailerlite.com)
-// is a marketing platform — subscribers, groups, campaigns, automations —
-// with no simple "send one email right now" endpoint. Actual single/
-// transactional email sending is a sibling product called MailerSend,
-// under the same parent company and accessible via the SAME MailerLite
-// login (SSO) — so "connect MailerLite" in practice means generating a
-// key from the MailerSend side of that account. This file calls
-// MailerSend's REST API directly via fetch (no SDK dependency needed).
+// Transactional email sending via MailerSend.
 //
 // Required env vars (set in Render's dashboard — or locally in .env for
 // testing — never commit real values):
-//   MAILERLITE_API_KEY    - a MailerSend API token. Generate one at:
+//   MAILERSEND_API_KEY    - a MailerSend API token. Generate one at:
 //                           MailerSend dashboard > Domains > select your
 //                           domain > Manage > API tokens > Create token.
-//   MAILERLITE_FROM_EMAIL - the "from" address. Must be on a domain
-//                           verified in MailerSend. New accounts get a
-//                           free trial domain automatically (something
-//                           like you@trial-xxxxx.mlsender.net) that needs
-//                           NO DNS setup and can send up to 100 emails —
-//                           perfect for proving this works today. For
-//                           ongoing/daily use later, verify your own
-//                           domain instead: MailerSend dashboard > Email >
-//                           Domains > Add domain > add the shown SPF/
-//                           DKIM/CNAME DNS records (or let MailerSend add
-//                           them automatically if your registrar supports
-//                           it) > Finish verification.
+//   MAILERSEND_FROM_EMAIL - the "from" address. Must be on a domain
+//                           verified in MailerSend (e.g. lularose.co).
 //   REMINDER_EMAIL         - where reminder emails get sent (your own
 //                           inbox).
 // Optional:
-//   MAILERLITE_FROM_NAME   - display name for the From address. Defaults
+//   MAILERSEND_FROM_NAME   - display name for the From address. Defaults
 //                           to "Shop Reminders" if unset.
 const MAILERSEND_API_URL = 'https://api.mailersend.com/v1/email'
 
 function getMissingEmailEnvVars(env) {
   const missing = []
-  if (!env.MAILERLITE_API_KEY) missing.push('MAILERLITE_API_KEY')
-  if (!env.MAILERLITE_FROM_EMAIL) missing.push('MAILERLITE_FROM_EMAIL')
+  if (!env.MAILERSEND_API_KEY) missing.push('MAILERSEND_API_KEY')
+  if (!env.MAILERSEND_FROM_EMAIL) missing.push('MAILERSEND_FROM_EMAIL')
   if (!env.REMINDER_EMAIL) missing.push('REMINDER_EMAIL')
   return missing
 }
@@ -80,13 +61,13 @@ async function sendEmail(env, { to, subject, body }) {
   const response = await fetch(MAILERSEND_API_URL, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${env.MAILERLITE_API_KEY}`,
+      Authorization: `Bearer ${env.MAILERSEND_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       from: {
-        email: env.MAILERLITE_FROM_EMAIL,
-        name: env.MAILERLITE_FROM_NAME || 'Shop Reminders',
+        email: env.MAILERSEND_FROM_EMAIL,
+        name: env.MAILERSEND_FROM_NAME || 'Shop Reminders',
       },
       to: [{ email: to }],
       subject,
