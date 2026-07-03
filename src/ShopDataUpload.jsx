@@ -11,7 +11,7 @@ function readFileAsText(file) {
   })
 }
 
-function ShopDataUpload({ password }) {
+function ShopDataUpload({ password, onUploadComplete }) {
   const [file, setFile] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [result, setResult] = useState(null)
@@ -59,6 +59,7 @@ function ShopDataUpload({ password }) {
       }
       setResult(data)
       setFile(null)
+      onUploadComplete?.(data)
     } catch (err) {
       setError(err.message)
     } finally {

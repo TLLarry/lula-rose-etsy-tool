@@ -127,12 +127,32 @@ function getDbStatus() {
   return { tables: TABLE_NAMES, counts }
 }
 
-// GET /api/db-status. Requires the shop password via the `x-app-password`
-// header (checked with the same constant-time comparison /api/login uses) —
-// this endpoint exposes row counts, so it shouldn't be reachable by anyone
-// who just knows the URL. `passwordsMatch` is imported by the route wiring
-// (vite.config.js / server.js) from server/listingApi.js, the same helper
-// /api/login already uses, so there's exactly one implementation of it.
+// Shared by every handler below. Requires the shop password via the
+// `x-app-password` header (checked with the same constant-time comparison
+// /api/login uses) — these endpoints expose shop data, so none of them
+// should be reachable by anyone who just knows the URL. `passwordsMatch` is
+// imported by the route wiring (vite.config.js / server.js) from
+// server/listingApi.js, the same helper /api/login already uses, so
+// there's exactly one implementation of it. Writes an error response and
+// returns false if the check fails; the caller should return immediately.
+function checkAppPassword(req, res, env, passwordsMatch) {
+  if (!env.APP_PASSWORD) {
+    res.statusCode = 500
+    res.end(
+      JSON.stringify({ error: 'APP_PASSWORD is not set. Copy .env.example to .env and fill it in.' })
+    )
+    return false
+  }
+  const provided = req.headers['x-app-password']
+  if (typeof provided !== 'string' || !passwordsMatch(provided, env.APP_PASSWORD)) {
+    res.statusCode = 401
+    res.end(JSON.stringify({ error: 'Incorrect password.' }))
+    return false
+  }
+  return true
+}
+
+// GET /api/db-status.
 function createDbStatusHandler(env, passwordsMatch) {
   return (req, res) => {
     if (req.method !== 'GET') {
@@ -142,27 +162,205 @@ function createDbStatusHandler(env, passwordsMatch) {
     }
 
     res.setHeader('Content-Type', 'application/json')
-
-    if (!env.APP_PASSWORD) {
-      res.statusCode = 500
-      res.end(
-        JSON.stringify({
-          error: 'APP_PASSWORD is not set. Copy .env.example to .env and fill it in.',
-        })
-      )
-      return
-    }
-
-    const provided = req.headers['x-app-password']
-    if (typeof provided !== 'string' || !passwordsMatch(provided, env.APP_PASSWORD)) {
-      res.statusCode = 401
-      res.end(JSON.stringify({ error: 'Incorrect password.' }))
-      return
-    }
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
 
     try {
       const status = getDbStatus()
       res.end(JSON.stringify({ ok: true, tables: status.tables, counts: status.counts }))
+    } catch (err) {
+      res.statusCode = 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
+// Dashboard card: distinct keywords tracked across all months (not total
+// rows — the same keyword can appear in multiple uploads/months) and total
+// uploads recorded. "Listings Generated" and "Orders/Revenue" stay
+// placeholders on the frontend; nothing writes to `listings` yet.
+function getDashboardSummary() {
+  const totalKeywordsTracked = db
+    .prepare(`SELECT COUNT(DISTINCT keyword) AS count FROM keyword_stats`)
+    .get().count
+  const uploads = db.prepare(`SELECT COUNT(*) AS count FROM uploads`).get().count
+  return { totalKeywordsTracked, uploads }
+}
+
+// GET /api/dashboard-summary.
+function createDashboardSummaryHandler(env, passwordsMatch) {
+  return (req, res) => {
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      const summary = getDashboardSummary()
+      res.end(JSON.stringify({ ok: true, ...summary }))
+    } catch (err) {
+      res.statusCode = 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
+function getAvailableMonths() {
+  return db
+    .prepare(`SELECT DISTINCT month FROM keyword_stats ORDER BY month DESC`)
+    .all()
+    .map((row) => row.month)
+}
+
+const TOP_KEYWORD_LIMIT = 20
+
+// Keywords are aggregated across sources/uploads within the month (the same
+// keyword can appear in more than one upload). SQL SUM() ignores NULLs and
+// only returns NULL itself when every value in the group was NULL — so a
+// keyword that only ever showed up in research-only sources (eRank,
+// EverBee, both of which never populate `orders`) correctly aggregates to
+// `orders: null`, not a fake 0, and a month is only treated as having real
+// sales data if at least one row that month has a non-null `orders`.
+function getPerformanceForMonth(requestedMonth) {
+  const availableMonths = getAvailableMonths()
+  if (availableMonths.length === 0) {
+    return {
+      month: null,
+      availableMonths: [],
+      totalKeywords: 0,
+      hasSalesData: false,
+      totalOrders: 0,
+      topByVisits: [],
+      topByOrders: null,
+    }
+  }
+
+  // No month requested -> default to the most recent one with data. A month
+  // that IS requested but has no rows is reported on honestly (empty
+  // results for that exact month) rather than silently substituted.
+  const month = requestedMonth || availableMonths[0]
+  if (!availableMonths.includes(month)) {
+    return {
+      month,
+      availableMonths,
+      totalKeywords: 0,
+      hasSalesData: false,
+      totalOrders: 0,
+      topByVisits: [],
+      topByOrders: null,
+    }
+  }
+
+  const aggregated = db
+    .prepare(
+      `SELECT keyword, SUM(visits) AS visits, SUM(orders) AS orders
+       FROM keyword_stats
+       WHERE month = ?
+       GROUP BY keyword`
+    )
+    .all(month)
+
+  const salesRow = db
+    .prepare(
+      `SELECT COUNT(*) AS count, SUM(orders) AS totalOrders
+       FROM keyword_stats
+       WHERE month = ? AND orders IS NOT NULL`
+    )
+    .get(month)
+  const hasSalesData = salesRow.count > 0
+  const totalOrders = hasSalesData ? salesRow.totalOrders || 0 : 0
+
+  const withConversion = aggregated.map((row) => {
+    const visits = row.visits ?? 0
+    const orders = hasSalesData ? row.orders : null
+    return {
+      keyword: row.keyword,
+      visits,
+      orders,
+      conversionRate: orders !== null && visits > 0 ? orders / visits : null,
+    }
+  })
+
+  const topByVisits = [...withConversion]
+    .sort((a, b) => b.visits - a.visits)
+    .slice(0, TOP_KEYWORD_LIMIT)
+
+  const topByOrders = hasSalesData
+    ? [...withConversion]
+        .filter((row) => row.orders !== null)
+        .sort((a, b) => b.orders - a.orders)
+        .slice(0, TOP_KEYWORD_LIMIT)
+    : null
+
+  return {
+    month,
+    availableMonths,
+    totalKeywords: aggregated.length,
+    hasSalesData,
+    totalOrders,
+    topByVisits,
+    topByOrders,
+  }
+}
+
+function buildPerformanceSummary({ month, totalKeywords, hasSalesData, totalOrders }) {
+  if (!month) return null
+  if (totalKeywords === 0) return `No keyword data recorded for ${month} yet.`
+  const keywordWord = totalKeywords === 1 ? 'keyword' : 'keywords'
+  if (hasSalesData) {
+    const orderWord = totalOrders === 1 ? 'order' : 'orders'
+    return `In ${month} you're tracking ${totalKeywords} ${keywordWord} with ${totalOrders} recorded ${orderWord}.`
+  }
+  return `In ${month} you're tracking ${totalKeywords} ${keywordWord} with 0 recorded orders — this is keyword-research data.`
+}
+
+function buildPerformanceNote({ month, totalKeywords, hasSalesData, availableMonths }) {
+  if (!month) {
+    return 'No keyword data yet. Upload an Etsy Stats, eRank, or EverBee export above to get started.'
+  }
+  if (totalKeywords === 0) {
+    return availableMonths.length > 0
+      ? `No data for ${month} — try one of: ${availableMonths.join(', ')}.`
+      : 'Upload an Etsy Stats, eRank, or EverBee export above to get started.'
+  }
+  if (hasSalesData) return null
+  return "eRank and EverBee exports don't include order data. Upload an Etsy Stats export to see conversion rates and top keywords by orders."
+}
+
+// GET /api/performance?month=YYYY-MM. Omit `month` (or pass one with no
+// data) to fall back to the most recent month that has data. Never errors
+// for "no data" — that's a normal, empty-state payload the frontend renders
+// directly (see buildPerformanceNote).
+function createPerformanceHandler(env, passwordsMatch) {
+  return (req, res) => {
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      const queryString = req.url.includes('?') ? req.url.split('?')[1] : ''
+      const requestedMonth = new URLSearchParams(queryString).get('month')
+      const data = getPerformanceForMonth(requestedMonth)
+
+      res.end(
+        JSON.stringify({
+          ok: true,
+          month: data.month,
+          availableMonths: data.availableMonths,
+          summary: buildPerformanceSummary(data),
+          topByVisits: data.topByVisits,
+          topByOrders: data.topByOrders,
+          note: buildPerformanceNote(data),
+        })
+      )
     } catch (err) {
       res.statusCode = 500
       res.end(JSON.stringify({ error: err.message }))
@@ -178,5 +376,10 @@ export {
   saveUpload,
   getDbStatus,
   createDbStatusHandler,
+  getDashboardSummary,
+  createDashboardSummaryHandler,
+  getAvailableMonths,
+  getPerformanceForMonth,
+  createPerformanceHandler,
   DB_PATH,
 }

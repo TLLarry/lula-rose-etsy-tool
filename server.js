@@ -11,7 +11,11 @@ import {
   createGenerateTitleHandler,
   passwordsMatch,
 } from './server/listingApi.js'
-import { createDbStatusHandler } from './server/db.js'
+import {
+  createDbStatusHandler,
+  createDashboardSummaryHandler,
+  createPerformanceHandler,
+} from './server/db.js'
 import { createUploadCsvHandler } from './server/csvUpload.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
@@ -53,6 +57,8 @@ app.use('/api/login', createLoginHandler(env))
 app.use('/api/generate-title', createGenerateTitleHandler(env))
 app.use('/api/db-status', createDbStatusHandler(env, passwordsMatch))
 app.use('/api/upload-csv', createUploadCsvHandler(env))
+app.use('/api/dashboard-summary', createDashboardSummaryHandler(env, passwordsMatch))
+app.use('/api/performance', createPerformanceHandler(env, passwordsMatch))
 
 app.use(express.static(distDir))
 

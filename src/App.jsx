@@ -1,16 +1,22 @@
 import { useState } from 'react'
 import './App.css'
 import LoginScreen from './LoginScreen'
+import Sidebar from './Sidebar'
+import Dashboard from './Dashboard'
 import EtsyTool from './EtsyTool'
-import ShopDataUpload from './ShopDataUpload'
+import KeywordAnalysis from './KeywordAnalysis'
+import Calendar from './Calendar'
 
 function App() {
   // In-memory only — resets on tab close/refresh, never persisted to
   // localStorage or sessionStorage. The verified password is kept here too
-  // (not just an `authenticated` flag) so ShopDataUpload can attach it to
-  // its own authenticated request.
+  // (not just an `authenticated` flag) so pages that call authenticated
+  // endpoints (Dashboard, KeywordAnalysis/ShopDataUpload) can attach it.
   const [authenticated, setAuthenticated] = useState(false)
   const [password, setPassword] = useState('')
+  // Client-side only — which page is showing. Not persisted anywhere, so a
+  // refresh always lands back on the Dashboard after re-login.
+  const [activePage, setActivePage] = useState('dashboard')
 
   if (!authenticated) {
     return (
@@ -24,10 +30,15 @@ function App() {
   }
 
   return (
-    <>
-      <EtsyTool />
-      <ShopDataUpload password={password} />
-    </>
+    <div id="app-layout">
+      <Sidebar activePage={activePage} onNavigate={setActivePage} />
+      <main id="main-content">
+        {activePage === 'dashboard' && <Dashboard password={password} />}
+        {activePage === 'listing-tool' && <EtsyTool />}
+        {activePage === 'keyword-analysis' && <KeywordAnalysis password={password} />}
+        {activePage === 'calendar' && <Calendar />}
+      </main>
+    </div>
   )
 }
 

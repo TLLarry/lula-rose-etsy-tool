@@ -5,7 +5,11 @@ import {
   createGenerateTitleHandler,
   passwordsMatch,
 } from './server/listingApi.js'
-import { createDbStatusHandler } from './server/db.js'
+import {
+  createDbStatusHandler,
+  createDashboardSummaryHandler,
+  createPerformanceHandler,
+} from './server/db.js'
 import { createUploadCsvHandler } from './server/csvUpload.js'
 
 function etsyTitleWriterPlugin(env) {
@@ -16,6 +20,11 @@ function etsyTitleWriterPlugin(env) {
       server.middlewares.use('/api/generate-title', createGenerateTitleHandler(env))
       server.middlewares.use('/api/db-status', createDbStatusHandler(env, passwordsMatch))
       server.middlewares.use('/api/upload-csv', createUploadCsvHandler(env))
+      server.middlewares.use(
+        '/api/dashboard-summary',
+        createDashboardSummaryHandler(env, passwordsMatch)
+      )
+      server.middlewares.use('/api/performance', createPerformanceHandler(env, passwordsMatch))
     },
   }
 }

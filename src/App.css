@@ -523,3 +523,237 @@ mark {
   border-radius: 8px;
   padding: 12px 16px;
 }
+
+/* ---- Sidebar layout ---- */
+
+#app-layout {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  flex-grow: 1;
+  width: 100%;
+  min-height: 0;
+
+  @media (max-width: 700px) {
+    flex-direction: column;
+  }
+}
+
+#sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 200px;
+  flex-shrink: 0;
+  padding: 24px 16px;
+  border-right: 1px solid var(--border);
+  box-sizing: border-box;
+  text-align: left;
+
+  @media (max-width: 700px) {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+.sidebar-header {
+  font-family: var(--heading);
+  font-weight: 600;
+  font-size: 18px;
+  color: var(--text-h);
+  margin-bottom: 20px;
+  padding: 0 12px;
+}
+
+.sidebar-nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  @media (max-width: 700px) {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+.sidebar-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+
+  &:hover {
+    background: var(--accent-bg);
+    color: var(--text-h);
+  }
+}
+
+.sidebar-link.active {
+  background: var(--accent);
+  color: #fff;
+
+  &:hover {
+    background: var(--accent);
+    color: #fff;
+  }
+}
+
+#main-content {
+  flex-grow: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Dashboard / Keyword Analysis / Calendar pages ---- */
+
+#dashboard-page,
+#keyword-analysis-page,
+#calendar-page {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  text-align: left;
+  padding: 48px 32px;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  flex-grow: 1;
+
+  @media (max-width: 1024px) {
+    padding: 32px 20px;
+  }
+}
+
+#dashboard-page h1,
+#keyword-analysis-page h1,
+#calendar-page h1 {
+  text-align: left;
+  margin: 0;
+}
+
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.summary-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summary-card.placeholder {
+  background: var(--code-bg);
+}
+
+.summary-card-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.summary-card-value {
+  font-size: 32px;
+  font-weight: 600;
+  color: var(--text-h);
+  font-family: var(--heading);
+}
+
+.summary-card-note {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.charts-placeholder {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--text);
+}
+
+#keyword-analysis-page #shop-data-upload {
+  padding: 0;
+  border-top: none;
+  max-width: none;
+}
+
+.analysis-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+}
+
+.month-select-field select {
+  font: inherit;
+  font-size: 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  align-self: flex-start;
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+    border-color: var(--accent-border);
+  }
+}
+
+.performance-summary {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.keyword-table-wrap {
+  overflow-x: auto;
+}
+
+.keyword-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+
+  th,
+  td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  th {
+    color: var(--text);
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  td {
+    color: var(--text-h);
+  }
+}
