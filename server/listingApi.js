@@ -20,6 +20,13 @@ const MAX_HEADER_LENGTH = 155
 const MAX_ALT_TEXT_LENGTH = 125
 const MAX_FILENAME_LENGTH = 200
 const MAX_CATEGORIES = 3
+// Title/header convergence: neither can be fixed by truncation without
+// violating the MINIMUM length (unlike tags, which enforceTagLength always
+// guarantees deterministically), so a model miss can only be corrected by
+// asking again. One retry wasn't always enough — this raises the ceiling
+// to 3 attempts, each telling the model the exact character count and
+// which direction it needs to move.
+const MAX_LENGTH_RETRY_ATTEMPTS = 3
 
 // Optional seller-confirmed facts. Keys match what the frontend sends;
 // labels are what the model sees when a fact is provided.
@@ -323,26 +330,42 @@ function reconcileTags(tags) {
   return { finalTags, needsRetry }
 }
 
-async function retryTitleLength(apiKey, description, keywords, images, previousTitle) {
+// Loops up to MAX_LENGTH_RETRY_ATTEMPTS times, re-checking after each one —
+// a title can only end up here for being too SHORT (enforceTitleLength
+// already deterministically caps the too-long case before this is ever
+// called), but a single retry doesn't always land in range either. The
+// conversation accumulates every past attempt (rather than starting fresh
+// each round) so the model can see what it already tried and how far off
+// each one was, instead of repeating the same miss.
+async function retryTitleLength(apiKey, description, keywords, images, title) {
   const client = new Anthropic({ apiKey })
-  const response = await client.messages.create({
-    model: 'claude-opus-4-8',
-    max_tokens: 300,
-    output_config: { effort: 'medium' },
-    system: TITLE_RULES_SYSTEM_PROMPT,
-    messages: [
-      { role: 'user', content: buildTitleContent(description, keywords, images) },
-      { role: 'assistant', content: previousTitle },
-      {
-        role: 'user',
-        content: `That title is ${previousTitle.length} characters, which is outside the required 135-140 character range. Rewrite it so the total length is between 135 and 140 characters — keep the same front-loaded primary keyword within the first 40 characters and the same comma-separated phrase style. If it was too short, add another genuine, relevant, comma-separated phrase to reach the required length — never pad with repetition or filler. Respond with ONLY the corrected title text, nothing else.`,
-      },
-    ],
-  })
+  const conversation = [{ role: 'user', content: buildTitleContent(description, keywords, images) }]
+  let current = title
+  let attempts = 0
 
-  const textBlock = response.content.find((block) => block.type === 'text')
-  if (!textBlock) return previousTitle
-  return textBlock.text.trim().replace(/^["']|["']$/g, '')
+  while (current.length < MIN_TITLE_LENGTH && attempts < MAX_LENGTH_RETRY_ATTEMPTS) {
+    const shortBy = MIN_TITLE_LENGTH - current.length
+    conversation.push({ role: 'assistant', content: current })
+    conversation.push({
+      role: 'user',
+      content: `That title is ${current.length} characters — ${shortBy} character${shortBy === 1 ? '' : 's'} too short (must be 135-140, inclusive). Add another genuine, relevant, comma-separated phrase — never pad with repetition or filler — so the total lands in that exact range. Keep the same front-loaded primary keyword within the first 40 characters and the same comma-separated phrase style. Respond with ONLY the corrected title text, nothing else.`,
+    })
+
+    const response = await client.messages.create({
+      model: 'claude-opus-4-8',
+      max_tokens: 300,
+      output_config: { effort: 'medium' },
+      system: TITLE_RULES_SYSTEM_PROMPT,
+      messages: conversation,
+    })
+    const textBlock = response.content.find((block) => block.type === 'text')
+    if (textBlock) {
+      current = enforceTitleLength(textBlock.text.trim().replace(/^["']|["']$/g, ''))
+    }
+    attempts += 1
+  }
+
+  return current
 }
 
 async function generateTitle(apiKey, description, keywords, images) {
@@ -369,12 +392,11 @@ async function generateTitle(apiKey, description, keywords, images) {
   let title = enforceTitleLength(textBlock.text.trim().replace(/^["']|["']$/g, ''))
 
   // Deterministic max-140 enforcement above always holds. Min-135 can't be
-  // fixed by trimming, so this is the one allowed retry — if the model still
-  // undershoots after that, the title is returned as-is and the frontend
-  // flags it in red rather than looping indefinitely.
+  // fixed by trimming, so this goes to the retry loop — if it's STILL short
+  // after MAX_LENGTH_RETRY_ATTEMPTS attempts, the title is returned as-is
+  // and the frontend flags it in red rather than looping indefinitely.
   if (title.length < MIN_TITLE_LENGTH) {
-    const retried = await retryTitleLength(apiKey, description, keywords, images, title)
-    title = enforceTitleLength(retried)
+    title = await retryTitleLength(apiKey, description, keywords, images, title)
   }
 
   return title
@@ -554,15 +576,10 @@ If asked to fix tags: for each flagged position, return a new multi-word phrase 
 
 Respond with ONLY the JSON object — no markdown fences, no commentary.`
 
-function buildCorrectionSchema(needsHeader, needsTagsCount) {
-  const properties = {}
-  const required = []
-  if (needsHeader) {
-    properties.header = { type: 'string' }
-    required.push('header')
-  }
-  if (needsTagsCount > 0) {
-    properties.tags = {
+const TAG_CORRECTION_SCHEMA = {
+  type: 'object',
+  properties: {
+    tags: {
       type: 'array',
       items: {
         type: 'object',
@@ -573,64 +590,42 @@ function buildCorrectionSchema(needsHeader, needsTagsCount) {
         required: ['index', 'value'],
         additionalProperties: false,
       },
-    }
-    required.push('tags')
-  }
-  return { type: 'object', properties, required, additionalProperties: false }
+    },
+  },
+  required: ['tags'],
+  additionalProperties: false,
 }
 
-function buildCorrectionUserPrompt({
-  title,
-  description,
-  keywords,
-  header,
-  headerNeedsFix,
-  tagIssues,
-  currentTags,
-}) {
+function buildTagCorrectionUserPrompt({ title, description, keywords, tagIssues, currentTags }) {
   const parts = [`Etsy title for context: ${title}`]
   if (description && description.trim()) parts.push(`Product description: ${description}`)
   if (keywords && keywords.trim()) parts.push(`Keywords: ${keywords}`)
 
-  if (headerNeedsFix) {
-    parts.push(
-      `The current header is ${header.length} characters, which is out of range: "${header}". Rewrite it to be between 150 and 155 characters.`
-    )
-  }
-  if (tagIssues.length > 0) {
-    const lines = tagIssues.map(
-      ({ index, tag }) =>
-        `- Position ${index + 1}: current tag "${tag}" (${tag.length} characters) is over the 20-character limit and can't be shortened cleanly. Provide a compliant replacement.`
-    )
-    parts.push(
-      `These tags need a compliant replacement:\n${lines.join('\n')}\n\nTags already in use — do not duplicate any of these: ${currentTags.join(', ')}`
-    )
-  }
+  const lines = tagIssues.map(
+    ({ index, tag }) =>
+      `- Position ${index + 1}: current tag "${tag}" (${tag.length} characters) is over the 20-character limit and can't be shortened cleanly. Provide a compliant replacement.`
+  )
+  parts.push(
+    `These tags need a compliant replacement:\n${lines.join('\n')}\n\nTags already in use — do not duplicate any of these: ${currentTags.join(', ')}`
+  )
   return parts.join('\n\n')
 }
 
-// One combined retry covering whatever's wrong in this extras response —
-// header out of range and/or tags that couldn't be cleanly truncated. Only
-// asks for the specific corrections needed, so body/specs/faq/altText (which
-// weren't flagged) are never touched.
-async function retryExtrasCorrections(apiKey, context) {
-  const needsHeader = context.headerNeedsFix
-  const needsTagsCount = context.tagIssues.length
-  if (!needsHeader && needsTagsCount === 0) return {}
+// One retry attempt for over-length tags — unlike title/header, tags always
+// have a deterministic fallback (enforceTagLength truncates), applied
+// unconditionally below regardless of what this returns, so a single
+// attempt at a *clean* fix is enough; there's no convergence risk to retry
+// against.
+async function retryTagCorrections(apiKey, context) {
+  if (context.tagIssues.length === 0) return {}
 
   const client = new Anthropic({ apiKey })
   const response = await client.messages.create({
     model: 'claude-opus-4-8',
     max_tokens: 800,
-    output_config: {
-      effort: 'medium',
-      format: {
-        type: 'json_schema',
-        schema: buildCorrectionSchema(needsHeader, needsTagsCount),
-      },
-    },
+    output_config: { effort: 'medium', format: { type: 'json_schema', schema: TAG_CORRECTION_SCHEMA } },
     system: CORRECTIONS_SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildCorrectionUserPrompt(context) }],
+    messages: [{ role: 'user', content: buildTagCorrectionUserPrompt(context) }],
   })
 
   const textBlock = response.content.find((block) => block.type === 'text')
@@ -640,6 +635,64 @@ async function retryExtrasCorrections(apiKey, context) {
   } catch {
     return {}
   }
+}
+
+const HEADER_CORRECTION_SCHEMA = {
+  type: 'object',
+  properties: { header: { type: 'string' } },
+  required: ['header'],
+  additionalProperties: false,
+}
+
+function describeLengthMiss(length, min, max) {
+  if (length < min) return `too short by ${min - length} character${min - length === 1 ? '' : 's'}`
+  return `too long by ${length - max} character${length - max === 1 ? '' : 's'}`
+}
+
+// Loops up to MAX_LENGTH_RETRY_ATTEMPTS times, re-checking after each one —
+// unlike title, header has no deterministic truncation fallback (trimming
+// would just make an over-length header worse for the too-short case, and
+// there's no clean "cut a whole phrase" boundary), so getting this right
+// depends entirely on the model converging within the retry budget.
+async function retryHeaderLength(apiKey, { title, description, keywords }, header) {
+  const client = new Anthropic({ apiKey })
+  let current = header
+  let attempts = 0
+
+  while (
+    (current.length < MIN_HEADER_LENGTH || current.length > MAX_HEADER_LENGTH) &&
+    attempts < MAX_LENGTH_RETRY_ATTEMPTS
+  ) {
+    const parts = [`Etsy title for context: ${title}`]
+    if (description && description.trim()) parts.push(`Product description: ${description}`)
+    if (keywords && keywords.trim()) parts.push(`Keywords: ${keywords}`)
+    parts.push(
+      `The current header is ${current.length} characters — ${describeLengthMiss(current.length, MIN_HEADER_LENGTH, MAX_HEADER_LENGTH)} (must be 150-155, inclusive): "${current}". Rewrite it to fall exactly in that range — one complete, natural-reading sentence built around the listing's primary keyword.`
+    )
+
+    const response = await client.messages.create({
+      model: 'claude-opus-4-8',
+      max_tokens: 400,
+      output_config: { effort: 'medium', format: { type: 'json_schema', schema: HEADER_CORRECTION_SCHEMA } },
+      system: CORRECTIONS_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: parts.join('\n\n') }],
+    })
+
+    const textBlock = response.content.find((block) => block.type === 'text')
+    if (textBlock) {
+      try {
+        const parsed = JSON.parse(textBlock.text)
+        if (typeof parsed.header === 'string' && parsed.header.trim()) {
+          current = parsed.header.trim()
+        }
+      } catch {
+        // Keep `current` as-is; the loop retries again if attempts remain.
+      }
+    }
+    attempts += 1
+  }
+
+  return current
 }
 
 async function generateListingExtras(apiKey, description, keywords, title, images, facts) {
@@ -670,22 +723,15 @@ async function generateListingExtras(apiKey, description, keywords, title, image
   let header = typeof parsed.header === 'string' ? parsed.header : ''
 
   const { finalTags, needsRetry } = reconcileTags(rawTags)
-  const headerNeedsFix = header.length < MIN_HEADER_LENGTH || header.length > MAX_HEADER_LENGTH
 
-  if (headerNeedsFix || needsRetry.length > 0) {
-    const corrections = await retryExtrasCorrections(apiKey, {
+  if (needsRetry.length > 0) {
+    const corrections = await retryTagCorrections(apiKey, {
       title,
       description,
       keywords,
-      header,
-      headerNeedsFix,
       tagIssues: needsRetry,
       currentTags: finalTags,
     })
-
-    if (headerNeedsFix && typeof corrections.header === 'string' && corrections.header.trim()) {
-      header = corrections.header.trim()
-    }
     if (Array.isArray(corrections.tags)) {
       corrections.tags.forEach((correction) => {
         if (
@@ -699,6 +745,10 @@ async function generateListingExtras(apiKey, description, keywords, title, image
         }
       })
     }
+  }
+
+  if (header.length < MIN_HEADER_LENGTH || header.length > MAX_HEADER_LENGTH) {
+    header = await retryHeaderLength(apiKey, { title, description, keywords }, header)
   }
 
   // Absolute guarantee regardless of how the tag got here (original,
@@ -914,10 +964,117 @@ If asked to fix tags: for each flagged position, return a new multi-word phrase 
 
 Respond with ONLY the JSON object — no markdown fences, no commentary.`
 
-function buildVariantCorrectionSchema(issues) {
+function buildVariantTagCorrectionSchema(tagIssuesByCategory) {
   const properties = {}
   const required = []
-  issues.forEach(({ categoryId, titleNeedsFix, headerNeedsFix, tagIssues }) => {
+  Object.keys(tagIssuesByCategory).forEach((categoryId) => {
+    properties[categoryId] = {
+      type: 'object',
+      properties: {
+        tags: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { index: { type: 'integer' }, value: { type: 'string' } },
+            required: ['index', 'value'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['tags'],
+      additionalProperties: false,
+    }
+    required.push(categoryId)
+  })
+  return { type: 'object', properties, required, additionalProperties: false }
+}
+
+function buildVariantTagCorrectionUserPrompt({ description, keywords, categories, tagIssuesByCategory }) {
+  const parts = []
+  if (description && description.trim()) parts.push(`Product description: ${description}`)
+  if (keywords && keywords.trim()) parts.push(`Keywords: ${keywords}`)
+
+  Object.entries(tagIssuesByCategory).forEach(([categoryId, tagIssues]) => {
+    const category = categories.find((candidate) => candidate.id === categoryId)
+    const lines = [
+      `Category "${categoryId}" (${category ? category.path : categoryId}) — tags needing replacement:`,
+    ]
+    tagIssues.forEach(({ index, tag }) => {
+      lines.push(
+        `  - Position ${index + 1}: current tag "${tag}" (${tag.length} characters) is over the 20-character limit and can't be shortened cleanly. Provide a compliant replacement.`
+      )
+    })
+    parts.push(lines.join('\n'))
+  })
+
+  return parts.join('\n\n')
+}
+
+// One retry attempt for over-length tags across every flagged variant, in a
+// single call — never one call per category. Same reasoning as the
+// single-listing path: enforceTagLength guarantees compliance afterward
+// regardless of outcome, so tags don't need the multi-round loop
+// title/header do.
+async function retryVariantTagCorrections(apiKey, { description, keywords, categories, tagIssuesByCategory }) {
+  if (Object.keys(tagIssuesByCategory).length === 0) return {}
+
+  const client = new Anthropic({ apiKey })
+  const response = await client.messages.create({
+    model: 'claude-opus-4-8',
+    max_tokens: 1500,
+    output_config: {
+      effort: 'medium',
+      format: { type: 'json_schema', schema: buildVariantTagCorrectionSchema(tagIssuesByCategory) },
+    },
+    system: VARIANT_CORRECTIONS_SYSTEM_PROMPT,
+    messages: [
+      {
+        role: 'user',
+        content: buildVariantTagCorrectionUserPrompt({
+          description,
+          keywords,
+          categories,
+          tagIssuesByCategory,
+        }),
+      },
+    ],
+  })
+
+  const textBlock = response.content.find((block) => block.type === 'text')
+  if (!textBlock) return {}
+  try {
+    return JSON.parse(textBlock.text)
+  } catch {
+    return {}
+  }
+}
+
+// Scans the variants' CURRENT state (not the original generation) so each
+// retry round in retryVariantLengthCorrections only asks about whatever is
+// still actually wrong.
+function collectVariantLengthIssues(categories, variants) {
+  return categories
+    .map((category) => {
+      const variant = variants[category.id]
+      const titleNeedsFix = variant.title.length < MIN_TITLE_LENGTH
+      const headerNeedsFix =
+        variant.header.length < MIN_HEADER_LENGTH || variant.header.length > MAX_HEADER_LENGTH
+      if (!titleNeedsFix && !headerNeedsFix) return null
+      return {
+        categoryId: category.id,
+        titleNeedsFix,
+        title: variant.title,
+        headerNeedsFix,
+        header: variant.header,
+      }
+    })
+    .filter(Boolean)
+}
+
+function buildVariantLengthCorrectionSchema(issues) {
+  const properties = {}
+  const required = []
+  issues.forEach(({ categoryId, titleNeedsFix, headerNeedsFix }) => {
     const categoryProperties = {}
     const categoryRequired = []
     if (titleNeedsFix) {
@@ -927,21 +1084,6 @@ function buildVariantCorrectionSchema(issues) {
     if (headerNeedsFix) {
       categoryProperties.header = { type: 'string' }
       categoryRequired.push('header')
-    }
-    if (tagIssues.length > 0) {
-      categoryProperties.tags = {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            index: { type: 'integer' },
-            value: { type: 'string' },
-          },
-          required: ['index', 'value'],
-          additionalProperties: false,
-        },
-      }
-      categoryRequired.push('tags')
     }
     properties[categoryId] = {
       type: 'object',
@@ -954,31 +1096,23 @@ function buildVariantCorrectionSchema(issues) {
   return { type: 'object', properties, required, additionalProperties: false }
 }
 
-function buildVariantCorrectionUserPrompt({ description, keywords, categories, issues }) {
+function buildVariantLengthCorrectionUserPrompt({ description, keywords, categories, issues }) {
   const parts = []
   if (description && description.trim()) parts.push(`Product description: ${description}`)
   if (keywords && keywords.trim()) parts.push(`Keywords: ${keywords}`)
 
-  issues.forEach(({ categoryId, titleNeedsFix, title, headerNeedsFix, header, tagIssues }) => {
+  issues.forEach(({ categoryId, titleNeedsFix, title, headerNeedsFix, header }) => {
     const category = categories.find((candidate) => candidate.id === categoryId)
     const lines = [`Category "${categoryId}" (${category ? category.path : categoryId}):`]
     if (titleNeedsFix) {
       lines.push(
-        `- Title is ${title.length} characters: "${title}". Rewrite to 135-140 characters, keeping the same front-loaded primary keyword and comma-separated style.`
+        `- Title is ${title.length} characters — ${describeLengthMiss(title.length, MIN_TITLE_LENGTH, MAX_TITLE_LENGTH)} (must be 135-140): "${title}". Rewrite it, keeping the same front-loaded primary keyword and comma-separated style.`
       )
     }
     if (headerNeedsFix) {
       lines.push(
-        `- Header is ${header.length} characters: "${header}". Rewrite to 150-155 characters.`
+        `- Header is ${header.length} characters — ${describeLengthMiss(header.length, MIN_HEADER_LENGTH, MAX_HEADER_LENGTH)} (must be 150-155): "${header}". Rewrite it to fall exactly in that range.`
       )
-    }
-    if (tagIssues.length > 0) {
-      lines.push('- Tags needing replacement:')
-      tagIssues.forEach(({ index, tag }) => {
-        lines.push(
-          `  - Position ${index + 1}: current tag "${tag}" (${tag.length} characters) is over the 20-character limit and can't be shortened cleanly. Provide a compliant replacement.`
-        )
-      })
     }
     parts.push(lines.join('\n'))
   })
@@ -986,32 +1120,60 @@ function buildVariantCorrectionUserPrompt({ description, keywords, categories, i
   return parts.join('\n\n')
 }
 
-// One combined retry covering every out-of-range field across every
-// variant, in a single call — never one retry per category.
-async function retryVariantCorrections(apiKey, context) {
-  if (context.issues.length === 0) return {}
-
+// Loops up to MAX_LENGTH_RETRY_ATTEMPTS rounds. Each round re-scans every
+// variant's CURRENT title/header (collectVariantLengthIssues), batches
+// whichever categories/fields are STILL out of range into ONE call (never
+// one call per category, same constraint as the initial generation), and
+// mutates `variants` in place with whatever comes back — so a category
+// that converges after round 1 is never asked about again in round 2 or 3.
+async function retryVariantLengthCorrections(apiKey, description, keywords, categories, variants) {
   const client = new Anthropic({ apiKey })
-  const response = await client.messages.create({
-    model: 'claude-opus-4-8',
-    max_tokens: 1500,
-    output_config: {
-      effort: 'medium',
-      format: {
-        type: 'json_schema',
-        schema: buildVariantCorrectionSchema(context.issues),
-      },
-    },
-    system: VARIANT_CORRECTIONS_SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildVariantCorrectionUserPrompt(context) }],
-  })
+  let attempts = 0
 
-  const textBlock = response.content.find((block) => block.type === 'text')
-  if (!textBlock) return {}
-  try {
-    return JSON.parse(textBlock.text)
-  } catch {
-    return {}
+  while (attempts < MAX_LENGTH_RETRY_ATTEMPTS) {
+    const issues = collectVariantLengthIssues(categories, variants)
+    if (issues.length === 0) break
+
+    const response = await client.messages.create({
+      model: 'claude-opus-4-8',
+      max_tokens: 1500,
+      output_config: {
+        effort: 'medium',
+        format: { type: 'json_schema', schema: buildVariantLengthCorrectionSchema(issues) },
+      },
+      system: VARIANT_CORRECTIONS_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: buildVariantLengthCorrectionUserPrompt({ description, keywords, categories, issues }),
+        },
+      ],
+    })
+
+    const textBlock = response.content.find((block) => block.type === 'text')
+    let corrections = {}
+    if (textBlock) {
+      try {
+        corrections = JSON.parse(textBlock.text)
+      } catch {
+        corrections = {}
+      }
+    }
+
+    issues.forEach(({ categoryId, titleNeedsFix, headerNeedsFix }) => {
+      const fix = corrections[categoryId]
+      if (!fix) return
+      if (titleNeedsFix && typeof fix.title === 'string' && fix.title.trim()) {
+        variants[categoryId].title = enforceTitleLength(
+          fix.title.trim().replace(/^["']|["']$/g, '')
+        )
+      }
+      if (headerNeedsFix && typeof fix.header === 'string' && fix.header.trim()) {
+        variants[categoryId].header = fix.header.trim()
+      }
+    })
+
+    attempts += 1
   }
 }
 
@@ -1050,7 +1212,7 @@ async function generateCategoryVariants(apiKey, description, keywords, images, f
   // Deterministic enforcement, per variant — same rules and helpers as the
   // single-listing path above, just looped across categories.
   const variants = {}
-  const allIssues = []
+  const tagIssuesByCategory = {}
 
   categories.forEach((category) => {
     const raw = rawVariants[category.id] || {}
@@ -1061,9 +1223,6 @@ async function generateCategoryVariants(apiKey, description, keywords, images, f
       Array.isArray(raw.tags) ? raw.tags : []
     )
     const header = typeof raw.header === 'string' ? raw.header : ''
-
-    const titleNeedsFix = title.length < MIN_TITLE_LENGTH
-    const headerNeedsFix = header.length < MIN_HEADER_LENGTH || header.length > MAX_HEADER_LENGTH
 
     variants[category.id] = {
       title,
@@ -1085,46 +1244,39 @@ async function generateCategoryVariants(apiKey, description, keywords, images, f
       triggerPhrases: Array.isArray(raw.triggerPhrases) ? raw.triggerPhrases : [],
     }
 
-    if (titleNeedsFix || headerNeedsFix || tagIssues.length > 0) {
-      allIssues.push({ categoryId: category.id, titleNeedsFix, title, headerNeedsFix, header, tagIssues })
+    if (tagIssues.length > 0) {
+      tagIssuesByCategory[category.id] = tagIssues
     }
   })
 
-  if (allIssues.length > 0) {
-    const corrections = await retryVariantCorrections(apiKey, {
+  if (Object.keys(tagIssuesByCategory).length > 0) {
+    const corrections = await retryVariantTagCorrections(apiKey, {
       description,
       keywords,
       categories,
-      issues: allIssues,
+      tagIssuesByCategory,
     })
 
-    allIssues.forEach(({ categoryId, titleNeedsFix, headerNeedsFix, tagIssues }) => {
+    Object.keys(tagIssuesByCategory).forEach((categoryId) => {
       const fix = corrections[categoryId]
-      if (!fix) return
-
-      if (titleNeedsFix && typeof fix.title === 'string' && fix.title.trim()) {
-        variants[categoryId].title = enforceTitleLength(
-          fix.title.trim().replace(/^["']|["']$/g, '')
-        )
-      }
-      if (headerNeedsFix && typeof fix.header === 'string' && fix.header.trim()) {
-        variants[categoryId].header = fix.header.trim()
-      }
-      if (tagIssues.length > 0 && Array.isArray(fix.tags)) {
-        fix.tags.forEach((correction) => {
-          if (
-            correction &&
-            typeof correction.index === 'number' &&
-            variants[categoryId].tags[correction.index] !== undefined &&
-            typeof correction.value === 'string' &&
-            correction.value.trim()
-          ) {
-            variants[categoryId].tags[correction.index] = correction.value.trim()
-          }
-        })
-      }
+      if (!fix || !Array.isArray(fix.tags)) return
+      fix.tags.forEach((correction) => {
+        if (
+          correction &&
+          typeof correction.index === 'number' &&
+          variants[categoryId].tags[correction.index] !== undefined &&
+          typeof correction.value === 'string' &&
+          correction.value.trim()
+        ) {
+          variants[categoryId].tags[correction.index] = correction.value.trim()
+        }
+      })
     })
   }
+
+  // Title/header convergence loop (up to MAX_LENGTH_RETRY_ATTEMPTS rounds,
+  // mutates `variants` in place) — see retryVariantLengthCorrections.
+  await retryVariantLengthCorrections(apiKey, description, keywords, categories, variants)
 
   // Absolute guarantee across every variant, regardless of retry outcome —
   // the UI must never see a tag over 20 chars in any tab.
