@@ -846,3 +846,126 @@ mark {
   background: var(--code-bg);
   color: var(--text-h);
 }
+
+.calendar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+}
+
+.calendar-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.calendar-prep-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.calendar-prep-card {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.calendar-prep-headline {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.calendar-event-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.calendar-event {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.calendar-event-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.calendar-event-name {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.calendar-event-date {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.calendar-event-meta {
+  display: flex;
+  gap: 14px;
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.calendar-evergreen-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.calendar-evergreen-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--code-bg);
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+
+.calendar-quarter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.calendar-quarter-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+
+  h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+    color: var(--text-h);
+  }
+
+  ul {
+    margin: 0;
+    padding: 0 0 0 16px;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  li {
+    margin-bottom: 4px;
+  }
+}

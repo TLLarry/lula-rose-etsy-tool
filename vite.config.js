@@ -12,6 +12,7 @@ import {
 } from './server/db.js'
 import { createUploadCsvHandler } from './server/csvUpload.js'
 import { createTagScoresHandler, createTrendsHandler } from './server/analysis.js'
+import { createCalendarHandler } from './server/calendar.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -28,6 +29,7 @@ function etsyTitleWriterPlugin(env) {
       server.middlewares.use('/api/performance', createPerformanceHandler(env, passwordsMatch))
       server.middlewares.use('/api/tag-scores', createTagScoresHandler(env, passwordsMatch))
       server.middlewares.use('/api/trends', createTrendsHandler(env, passwordsMatch))
+      server.middlewares.use('/api/calendar', createCalendarHandler(env, passwordsMatch))
     },
   }
 }

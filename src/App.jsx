@@ -40,7 +40,7 @@ function App() {
         {activePage === 'keyword-analysis' && <KeywordAnalysis password={password} />}
         {activePage === 'tag-scores' && <TagScores password={password} />}
         {activePage === 'trends' && <Trends password={password} />}
-        {activePage === 'calendar' && <Calendar />}
+        {activePage === 'calendar' && <Calendar password={password} />}
       </main>
     </div>
   )
