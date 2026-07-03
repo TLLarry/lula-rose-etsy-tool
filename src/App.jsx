@@ -6,6 +6,7 @@ import Dashboard from './Dashboard'
 import EtsyTool from './EtsyTool'
 import KeywordAnalysis from './KeywordAnalysis'
 import TagScores from './TagScores'
+import Trends from './Trends'
 import Calendar from './Calendar'
 
 function App() {
@@ -38,6 +39,7 @@ function App() {
         {activePage === 'listing-tool' && <EtsyTool />}
         {activePage === 'keyword-analysis' && <KeywordAnalysis password={password} />}
         {activePage === 'tag-scores' && <TagScores password={password} />}
+        {activePage === 'trends' && <Trends password={password} />}
         {activePage === 'calendar' && <Calendar />}
       </main>
     </div>

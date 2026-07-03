@@ -235,6 +235,35 @@ function getKeywordAggregatesForMonth(month) {
   return { keywords, hasOrderData: salesRow.count > 0 }
 }
 
+// Same as getKeywordAggregatesForMonth, but over a PERIOD — one or more
+// months summed together (a single month is just a period of one). This is
+// what the trends engine (server/analysis.js) builds "period A vs period B"
+// comparisons on top of. Kept separate from the singular version above
+// rather than having that one delegate here, so existing callers (Tag
+// Scores) are never touched by this change.
+function getKeywordAggregatesForMonths(months) {
+  if (!Array.isArray(months) || months.length === 0) {
+    return { keywords: [], hasOrderData: false }
+  }
+  const placeholders = months.map(() => '?').join(', ')
+  const keywords = db
+    .prepare(
+      `SELECT keyword, SUM(visits) AS visits, SUM(orders) AS orders
+       FROM keyword_stats
+       WHERE month IN (${placeholders})
+       GROUP BY keyword`
+    )
+    .all(...months)
+
+  const salesRow = db
+    .prepare(
+      `SELECT COUNT(*) AS count FROM keyword_stats WHERE month IN (${placeholders}) AND orders IS NOT NULL`
+    )
+    .get(...months)
+
+  return { keywords, hasOrderData: salesRow.count > 0 }
+}
+
 const TOP_KEYWORD_LIMIT = 20
 
 // Keywords are aggregated across sources/uploads within the month (the same
@@ -400,6 +429,7 @@ export {
   createDashboardSummaryHandler,
   getAvailableMonths,
   getKeywordAggregatesForMonth,
+  getKeywordAggregatesForMonths,
   getPerformanceForMonth,
   createPerformanceHandler,
   checkAppPassword,

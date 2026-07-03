@@ -11,7 +11,7 @@ import {
   createPerformanceHandler,
 } from './server/db.js'
 import { createUploadCsvHandler } from './server/csvUpload.js'
-import { createTagScoresHandler } from './server/analysis.js'
+import { createTagScoresHandler, createTrendsHandler } from './server/analysis.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -27,6 +27,7 @@ function etsyTitleWriterPlugin(env) {
       )
       server.middlewares.use('/api/performance', createPerformanceHandler(env, passwordsMatch))
       server.middlewares.use('/api/tag-scores', createTagScoresHandler(env, passwordsMatch))
+      server.middlewares.use('/api/trends', createTrendsHandler(env, passwordsMatch))
     },
   }
 }
