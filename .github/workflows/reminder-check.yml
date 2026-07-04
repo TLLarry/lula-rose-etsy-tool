@@ -55,11 +55,25 @@ jobs:
           else
             echo "slot=first" >> "$GITHUB_OUTPUT"
           fi
+      # No -f here on purpose: -f suppresses the response body on an HTTP
+      # error, which is exactly the information needed to diagnose one.
+      # Instead, the status code and body are captured separately, both
+      # printed to the log unconditionally, and the step is failed
+      # manually (exit 1) for anything outside 200-299 - so a real failure
+      # still shows up as a failed run, but with the actual error visible.
       - name: Call /api/run-reminder-check
         env:
           RENDER_APP_URL: ${{ secrets.RENDER_APP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           SLOT: ${{ steps.slot.outputs.slot }}
         run: |
-          curl -sf -X POST "${RENDER_APP_URL}/api/run-reminder-check?slot=${SLOT}" \
-            -H "x-cron-secret: ${CRON_SECRET}"
+          response=$(curl -s -w '\n%{http_code}' -X POST "${RENDER_APP_URL}/api/run-reminder-check?slot=${SLOT}" \
+            -H "x-cron-secret: ${CRON_SECRET}")
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          echo "HTTP status: $http_code"
+          echo "Response body: $body"
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "Request failed with status $http_code"
+            exit 1
+          fi
