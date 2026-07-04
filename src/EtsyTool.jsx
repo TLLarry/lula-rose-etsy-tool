@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { CATEGORIES } from './categories.js'
+import { splitAtSnippetBoundary } from './textSnippet.js'
 
 const MAX_CATEGORIES = 3
 const MIN_TITLE_LENGTH = 135
@@ -7,7 +8,6 @@ const MAX_TITLE_LENGTH = 140
 const MAX_TAG_LENGTH = 20
 const MIN_HEADER_LENGTH = 150
 const MAX_HEADER_LENGTH = 155
-const SNIPPET_LENGTH = 160
 const MAX_IMAGES = 20
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png']
@@ -33,34 +33,6 @@ const FACTS_FIELDS = [
 ]
 
 const EMPTY_FACTS = Object.fromEntries(FACTS_FIELDS.map(([key]) => [key, '']))
-
-// Figures out exactly where character 160 of "header + body" falls, so the
-// ranking-signal cutoff can be marked precisely instead of estimated.
-function splitAtSnippetBoundary(header, body) {
-  if (header.length >= SNIPPET_LENGTH) {
-    return {
-      headerHighlighted: header.slice(0, SNIPPET_LENGTH),
-      headerRest: header.slice(SNIPPET_LENGTH),
-      bodyHighlighted: '',
-      bodyRest: body,
-      cutoffIn: 'header',
-    }
-  }
-
-  const joinLength = header && body ? 1 : 0 // the space joining header + body
-  const remainingForBody = Math.max(
-    0,
-    Math.min(SNIPPET_LENGTH - header.length - joinLength, body.length)
-  )
-
-  return {
-    headerHighlighted: header,
-    headerRest: '',
-    bodyHighlighted: body.slice(0, remainingForBody),
-    bodyRest: body.slice(remainingForBody),
-    cutoffIn: 'body',
-  }
-}
 
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {

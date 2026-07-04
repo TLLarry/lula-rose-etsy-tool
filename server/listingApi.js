@@ -1415,4 +1415,6 @@ export {
   passwordsMatch,
   readJsonBody,
   RequestError,
+  generateTitle,
+  generateListingExtras,
 }

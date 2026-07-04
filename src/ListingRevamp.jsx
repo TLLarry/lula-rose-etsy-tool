@@ -1,6 +1,12 @@
 import { useRef, useState } from 'react'
+import { splitAtSnippetBoundary } from './textSnippet.js'
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024
+const MIN_TITLE_LENGTH = 135
+const MAX_TITLE_LENGTH = 140
+const MAX_TAG_LENGTH = 20
+const MIN_HEADER_LENGTH = 150
+const MAX_HEADER_LENGTH = 155
 
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
@@ -34,6 +40,11 @@ function ListingRevamp({ password }) {
   const [csvError, setCsvError] = useState('')
   const csvFileInputRef = useRef(null)
 
+  const [rewriteDescription, setRewriteDescription] = useState('')
+  const [rewriting, setRewriting] = useState(false)
+  const [rewriteResult, setRewriteResult] = useState(null)
+  const [rewriteError, setRewriteError] = useState('')
+
   const handleLoadListing = async () => {
     setLoading(true)
     setError('')
@@ -47,6 +58,10 @@ function ListingRevamp({ password }) {
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to load that listing.')
       setListing(data)
+      // Seeds the rewrite description from the live listing, once — the
+      // seller can still edit it before rewriting, and re-loading a
+      // different listing re-seeds it.
+      setRewriteDescription(data.description || '')
     } catch (err) {
       setError(err.message)
     } finally {
@@ -93,6 +108,30 @@ function ListingRevamp({ password }) {
       setCsvError(err.message)
     } finally {
       setParsingCsv(false)
+    }
+  }
+
+  const handleRewriteListing = async () => {
+    if (!csvResult || !rewriteDescription.trim()) return
+    setRewriting(true)
+    setRewriteError('')
+    setRewriteResult(null)
+    try {
+      const response = await fetch('/api/rewrite-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({
+          description: rewriteDescription,
+          keywords: csvResult.keywords,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to rewrite this listing.')
+      setRewriteResult(data)
+    } catch (err) {
+      setRewriteError(err.message)
+    } finally {
+      setRewriting(false)
     }
   }
 
@@ -275,6 +314,117 @@ function ListingRevamp({ password }) {
             </div>
           </div>
         )}
+      </div>
+
+      <div className="listing-revamp-section">
+        <h2>Rewrite This Listing</h2>
+        <p className="subhead">
+          Rewrites the title, tags, and description built around the winning keywords above —
+          same locked rules as the Listing Tool: title uses the full 130-140 characters with the
+          strongest keyword front-loaded in the first 40, all 13 tags at 20 characters max with
+          no repeats, and a keyword-rich natural description.
+        </p>
+
+        {!csvResult && (
+          <p className="subhead">
+            Upload a stats CSV above first — the rewrite is built around its winning keywords.
+          </p>
+        )}
+
+        <div className="field">
+          <label htmlFor="rewrite-description">Current listing description</label>
+          <textarea
+            id="rewrite-description"
+            rows={5}
+            value={rewriteDescription}
+            onChange={(event) => setRewriteDescription(event.target.value)}
+            placeholder="Paste or type the listing's current description — pre-filled automatically once the link above loads a listing."
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleRewriteListing}
+          disabled={!csvResult || !rewriteDescription.trim() || rewriting}
+        >
+          {rewriting ? 'Rewriting…' : 'Rewrite Listing'}
+        </button>
+
+        {rewriteError && <p className="error">{rewriteError}</p>}
+
+        {rewriteResult &&
+          (() => {
+            const titleOutOfRange =
+              rewriteResult.title.length < MIN_TITLE_LENGTH ||
+              rewriteResult.title.length > MAX_TITLE_LENGTH
+            const headerOutOfRange =
+              rewriteResult.header.length < MIN_HEADER_LENGTH ||
+              rewriteResult.header.length > MAX_HEADER_LENGTH
+            const snippetSplit = splitAtSnippetBoundary(rewriteResult.header, rewriteResult.body)
+
+            return (
+              <div className="result">
+                <div className="result-section">
+                  <h2>Title</h2>
+                  <p className="title-text">{rewriteResult.title}</p>
+                  <p className={`char-count${titleOutOfRange ? ' over' : ''}`}>
+                    {rewriteResult.title.length} / {MAX_TITLE_LENGTH} characters
+                  </p>
+                </div>
+
+                <div className="result-section">
+                  <h2>Tags ({rewriteResult.tags.length}/13)</h2>
+                  <ol className="tags-list">
+                    {rewriteResult.tags.map((tag, index) => (
+                      <li key={`${index}-${tag}`}>
+                        <span className="tag-text">{tag}</span>
+                        <span
+                          className={`char-count small${tag.length > MAX_TAG_LENGTH ? ' over' : ''}`}
+                        >
+                          {tag.length}/{MAX_TAG_LENGTH}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+
+                <div className="result-section">
+                  <h2>Description header</h2>
+                  <p className="header-text">
+                    <mark>{snippetSplit.headerHighlighted}</mark>
+                    {snippetSplit.cutoffIn === 'header' && snippetSplit.headerRest && (
+                      <>
+                        <span className="snippet-marker" title="First 160 characters end here">
+                          160
+                        </span>
+                        {snippetSplit.headerRest}
+                      </>
+                    )}
+                  </p>
+                  <p className={`char-count${headerOutOfRange ? ' over' : ''}`}>
+                    {rewriteResult.header.length}/{MAX_HEADER_LENGTH}
+                  </p>
+                </div>
+
+                <div className="result-section">
+                  <h2>Description body</h2>
+                  <p className="body-text">
+                    {snippetSplit.cutoffIn === 'body' ? (
+                      <>
+                        <mark>{snippetSplit.bodyHighlighted}</mark>
+                        <span className="snippet-marker" title="First 160 characters end here">
+                          160
+                        </span>
+                        {snippetSplit.bodyRest}
+                      </>
+                    ) : (
+                      rewriteResult.body
+                    )}
+                  </p>
+                </div>
+              </div>
+            )
+          })()}
       </div>
     </section>
   )

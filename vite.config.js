@@ -17,6 +17,7 @@ import { createSendTestEmailHandler } from './server/reminders.js'
 import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
 import { createLoadListingHandler } from './server/etsyListing.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
+import { createRewriteListingHandler } from './server/listingRevampRewrite.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -43,6 +44,10 @@ function etsyTitleWriterPlugin(env) {
       server.middlewares.use(
         '/api/parse-listing-csv',
         createParseListingCsvHandler(env, passwordsMatch)
+      )
+      server.middlewares.use(
+        '/api/rewrite-listing',
+        createRewriteListingHandler(env, passwordsMatch)
       )
     },
   }
