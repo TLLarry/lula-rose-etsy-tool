@@ -20,6 +20,7 @@ import { createUploadCsvHandler } from './server/csvUpload.js'
 import { createTagScoresHandler, createTrendsHandler } from './server/analysis.js'
 import { createCalendarHandler } from './server/calendar.js'
 import { createSendTestEmailHandler } from './server/reminders.js'
+import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
 // real environment variables set in the dashboard, so there's no .env file
@@ -53,6 +54,7 @@ const env = {
   MAILERSEND_FROM_EMAIL: process.env.MAILERSEND_FROM_EMAIL,
   MAILERSEND_FROM_NAME: process.env.MAILERSEND_FROM_NAME,
   REMINDER_EMAIL: process.env.REMINDER_EMAIL,
+  CRON_SECRET: process.env.CRON_SECRET,
 }
 
 const app = express()
@@ -70,6 +72,7 @@ app.use('/api/tag-scores', createTagScoresHandler(env, passwordsMatch))
 app.use('/api/trends', createTrendsHandler(env, passwordsMatch))
 app.use('/api/calendar', createCalendarHandler(env, passwordsMatch))
 app.use('/api/send-test-email', createSendTestEmailHandler(env, passwordsMatch))
+app.use('/api/run-reminder-check', createRunReminderCheckHandler(env))
 
 app.use(express.static(distDir))
 

@@ -119,4 +119,4 @@ function createCalendarHandler(env, passwordsMatch) {
   }
 }
 
-export { getCalendarData, createCalendarHandler }
+export { getCalendarData, createCalendarHandler, formatISODate }

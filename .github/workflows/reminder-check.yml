@@ -1,0 +1,51 @@
+# Triggers the daily seasonal-reminder check at 10:00am and 10:30am
+# Phoenix time (America/Phoenix is UTC-7 year-round — no DST — so these
+# UTC times never need adjusting for daylight saving).
+#
+# WHY THIS EXISTS instead of an in-process scheduler or Render's own Cron
+# Job feature: Render's free web service spins down after 15 minutes of
+# no incoming requests, and an in-process scheduler (e.g. node-cron)
+# simply cannot fire while the process is asleep — it would silently miss
+# the 10:00am check on any day nobody happened to be using the app.
+# Render's native Cron Job service would solve that, but has no free
+# tier (minimum ~$1-2/month for the two daily times). This workflow is a
+# free alternative: GitHub's own infrastructure fires the HTTP request
+# regardless of whether the app is awake, and that same request wakes
+# Render's sleeping service as a side effect.
+#
+# ONE-TIME SETUP (see the setup notes in the project's chat history / PR
+# description for the full walkthrough):
+#   1. In Render's dashboard, set CRON_SECRET to any long random string
+#      (e.g. `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`).
+#   2. In this GitHub repo: Settings > Secrets and variables > Actions >
+#      New repository secret. Add:
+#        RENDER_APP_URL - your live Render URL, e.g.
+#                         https://lula-rose-etsy-tool.onrender.com
+#                         (no trailing slash)
+#        CRON_SECRET     - the exact same value you set in Render
+name: Seasonal Reminder Checks
+
+on:
+  schedule:
+    - cron: '0 17 * * *' # 10:00am Phoenix time (first reminder)
+    - cron: '30 17 * * *' # 10:30am Phoenix time (follow-up reminder)
+  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
+
+jobs:
+  run-reminder-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine which slot this run is for
+        id: slot
+        run: |
+          if [ "${{ github.event.schedule }}" = "0 17 * * *" ]; then
+            echo "slot=first" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "30 17 * * *" ]; then
+            echo "slot=followup" >> "$GITHUB_OUTPUT"
+          else
+            echo "slot=first" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Call /api/run-reminder-check
+        run: |
+          curl -sf -X POST "${{ secrets.RENDER_APP_URL }}/api/run-reminder-check?slot=${{ steps.slot.outputs.slot }}" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"

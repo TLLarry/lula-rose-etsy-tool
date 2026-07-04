@@ -26,6 +26,9 @@ function Calendar({ password }) {
   const [sendingTest, setSendingTest] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [testError, setTestError] = useState('')
+  const [runningSlot, setRunningSlot] = useState(null)
+  const [runResult, setRunResult] = useState(null)
+  const [runError, setRunError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -68,6 +71,25 @@ function Calendar({ password }) {
     }
   }
 
+  const handleRunReminderCheck = async (slot) => {
+    setRunningSlot(slot)
+    setRunResult(null)
+    setRunError('')
+    try {
+      const response = await fetch(`/api/run-reminder-check?slot=${slot}`, {
+        method: 'POST',
+        headers: { 'x-app-password': password },
+      })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || 'Failed to run the reminder check.')
+      setRunResult(body)
+    } catch (err) {
+      setRunError(err.message)
+    } finally {
+      setRunningSlot(null)
+    }
+  }
+
   const allDated = data ? [...data.prepNow, ...data.comingUp] : []
   const byQuarter = QUARTERS.map((quarter) => ({
     quarter,
@@ -91,6 +113,51 @@ function Calendar({ password }) {
           <p className="calendar-test-success">
             Sent "{testResult.subject}" to {testResult.to} (based on {testResult.eventName}).
           </p>
+        )}
+      </div>
+
+      <div className="calendar-test-email">
+        <p className="subhead">
+          Scheduled reminders normally run automatically at 10:00am and 10:30am Phoenix time (see
+          setup notes for how that's wired up). These buttons run the exact same check right now,
+          for real — useful for testing without waiting. Running the same slot twice in one day
+          won't double-send; the second run reports those events as "skipped".
+        </p>
+        <div className="calendar-run-buttons">
+          <button
+            type="button"
+            onClick={() => handleRunReminderCheck('first')}
+            disabled={runningSlot !== null}
+          >
+            {runningSlot === 'first' ? 'Running…' : "Run today's check (10:00am slot)"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleRunReminderCheck('followup')}
+            disabled={runningSlot !== null}
+          >
+            {runningSlot === 'followup' ? 'Running…' : "Run today's check (10:30am slot)"}
+          </button>
+        </div>
+        {runError && <p className="error">{runError}</p>}
+        {runResult && (
+          <div className="calendar-test-success">
+            <p>
+              {runResult.checkDate} · {runResult.slot} slot — {runResult.eventsMatched} event
+              {runResult.eventsMatched === 1 ? '' : 's'} matched, {runResult.sent} sent,{' '}
+              {runResult.skipped} skipped, {runResult.failed} failed.
+            </p>
+            {runResult.results.length > 0 && (
+              <ul>
+                {runResult.results.map((item) => (
+                  <li key={item.eventId}>
+                    {item.eventName}: {item.outcome}
+                    {item.error ? ` (${item.error})` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
       </div>
 

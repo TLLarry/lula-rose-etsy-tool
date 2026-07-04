@@ -14,6 +14,7 @@ import { createUploadCsvHandler } from './server/csvUpload.js'
 import { createTagScoresHandler, createTrendsHandler } from './server/analysis.js'
 import { createCalendarHandler } from './server/calendar.js'
 import { createSendTestEmailHandler } from './server/reminders.js'
+import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -35,6 +36,7 @@ function etsyTitleWriterPlugin(env) {
         '/api/send-test-email',
         createSendTestEmailHandler(env, passwordsMatch)
       )
+      server.middlewares.use('/api/run-reminder-check', createRunReminderCheckHandler(env))
     },
   }
 }

@@ -1007,3 +1007,18 @@ mark {
   padding: 10px 14px;
   font-size: 14px;
 }
+
+.calendar-test-success ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.calendar-test-success li {
+  margin-bottom: 2px;
+}
+
+.calendar-run-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}

@@ -31,7 +31,14 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
 const db = new Database(DB_PATH)
 db.pragma('journal_mode = WAL')
 
-const TABLE_NAMES = ['listings', 'tags', 'keyword_stats', 'uploads']
+const TABLE_NAMES = [
+  'listings',
+  'tags',
+  'keyword_stats',
+  'uploads',
+  'reminder_runs',
+  'reminder_log',
+]
 
 // Safe to call on every boot — CREATE TABLE/INDEX IF NOT EXISTS is a no-op
 // once the schema already exists.
@@ -72,6 +79,40 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_keyword_stats_keyword ON keyword_stats(keyword);
   CREATE INDEX IF NOT EXISTS idx_keyword_stats_month ON keyword_stats(month);
+
+  -- One row per invocation of the scheduled reminder check (see
+  -- server/scheduledReminders.js) — "fired or not", so there's a
+  -- persistent record the scheduler is actually alive even on days with
+  -- nothing to send. Never deduplicated: every attempt is logged, even a
+  -- redundant one, so an accidental double-ping is visible here rather
+  -- than silently hidden.
+  CREATE TABLE IF NOT EXISTS reminder_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_date TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    events_matched INTEGER NOT NULL,
+    emails_sent INTEGER NOT NULL,
+    emails_skipped INTEGER NOT NULL,
+    emails_failed INTEGER NOT NULL,
+    ran_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- One row per actual send ATTEMPT for a specific (event, day, slot) —
+  -- this is what the dedup check reads before sending, so a matching
+  -- event never gets emailed twice for the same day and slot. A 'failed'
+  -- row does NOT block a later retry; only a 'sent' row does.
+  CREATE TABLE IF NOT EXISTS reminder_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL,
+    check_date TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message_id TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_reminder_log_dedup ON reminder_log(event_id, check_date, slot);
 `)
 
 function saveListing({ etsyListingId = null, title, category = null }) {
@@ -114,6 +155,42 @@ function saveUpload({ filename, rowCount, source }) {
   const result = db
     .prepare(`INSERT INTO uploads (filename, row_count, source) VALUES (?, ?, ?)`)
     .run(filename, rowCount ?? null, source ?? null)
+  return result.lastInsertRowid
+}
+
+// Logs one invocation of the scheduled reminder check, regardless of
+// whether anything matched or sent — this is the "is the scheduler alive"
+// heartbeat record.
+function logReminderRun({ checkDate, slot, eventsMatched, emailsSent, emailsSkipped, emailsFailed }) {
+  const result = db
+    .prepare(
+      `INSERT INTO reminder_runs (check_date, slot, events_matched, emails_sent, emails_skipped, emails_failed)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(checkDate, slot, eventsMatched, emailsSent, emailsSkipped, emailsFailed)
+  return result.lastInsertRowid
+}
+
+// True if this exact (event, day, slot) has already been successfully
+// sent — a prior 'failed' attempt does NOT count, so a transient send
+// error can still be retried on the next check for the same slot.
+function hasReminderBeenSent(eventId, checkDate, slot) {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS count FROM reminder_log
+       WHERE event_id = ? AND check_date = ? AND slot = ? AND status = 'sent'`
+    )
+    .get(eventId, checkDate, slot)
+  return row.count > 0
+}
+
+function logReminderSend({ eventId, checkDate, slot, status, messageId, error }) {
+  const result = db
+    .prepare(
+      `INSERT INTO reminder_log (event_id, check_date, slot, status, message_id, error)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(eventId, checkDate, slot, status, messageId ?? null, error ?? null)
   return result.lastInsertRowid
 }
 
@@ -433,5 +510,8 @@ export {
   getPerformanceForMonth,
   createPerformanceHandler,
   checkAppPassword,
+  logReminderRun,
+  hasReminderBeenSent,
+  logReminderSend,
   DB_PATH,
 }
