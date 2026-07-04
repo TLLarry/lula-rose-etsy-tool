@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { splitAtSnippetBoundary } from './textSnippet.js'
+import { MAX_IMAGES, ALLOWED_IMAGE_TYPES, readFileAsDataUrl, validateImageFiles } from './imageUpload.js'
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024
 const MIN_TITLE_LENGTH = 135
@@ -7,6 +8,7 @@ const MAX_TITLE_LENGTH = 140
 const MAX_TAG_LENGTH = 20
 const MIN_HEADER_LENGTH = 150
 const MAX_HEADER_LENGTH = 155
+const MAX_ALT_TEXT_LENGTH = 125
 
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
@@ -44,6 +46,10 @@ function ListingRevamp({ password }) {
   const [rewriting, setRewriting] = useState(false)
   const [rewriteResult, setRewriteResult] = useState(null)
   const [rewriteError, setRewriteError] = useState('')
+
+  const [photos, setPhotos] = useState([])
+  const [photoError, setPhotoError] = useState('')
+  const photoFileInputRef = useRef(null)
 
   const handleLoadListing = async () => {
     setLoading(true)
@@ -133,6 +139,74 @@ function ListingRevamp({ password }) {
     } finally {
       setRewriting(false)
     }
+  }
+
+  // Shared by both the file picker and paste — same validation rules
+  // (server/imageUpload.js) as the Listing Tool, so a rejected file gets
+  // the identical message regardless of how it was added.
+  const processPhotoFiles = async (files) => {
+    if (files.length === 0) return
+    setPhotoError('')
+
+    const { accepted, rejections } = validateImageFiles(files, photos.length)
+    if (rejections.length > 0) {
+      setPhotoError(rejections.join(' '))
+    }
+    if (accepted.length === 0) return
+
+    try {
+      const processed = await Promise.all(
+        accepted.map(async (file) => {
+          const dataUrl = await readFileAsDataUrl(file)
+          return {
+            id: `${file.name}-${file.lastModified}-${file.size}`,
+            name: file.name,
+            dataUrl,
+            altText: '',
+          }
+        })
+      )
+      setPhotos((prev) => [...prev, ...processed])
+    } catch {
+      setPhotoError('Could not read one of the selected images. Please try again.')
+    }
+  }
+
+  const handlePhotosSelected = (event) => {
+    const selectedFiles = Array.from(event.target.files || [])
+    event.target.value = '' // allow re-selecting the same file after removal
+    processPhotoFiles(selectedFiles)
+  }
+
+  // Pasting an image (e.g. copied from a file browser or another app)
+  // anywhere on this page adds it the same way choosing a file does — new
+  // capability the Listing Tool doesn't have yet, since that page only
+  // offers the file picker.
+  useEffect(() => {
+    const handlePaste = (event) => {
+      const items = Array.from(event.clipboardData?.items || [])
+      const files = items
+        .filter((item) => item.kind === 'file' && ALLOWED_IMAGE_TYPES.includes(item.type))
+        .map((item) => item.getAsFile())
+        .filter(Boolean)
+      if (files.length === 0) return
+      event.preventDefault()
+      processPhotoFiles(files)
+    }
+    document.addEventListener('paste', handlePaste)
+    return () => document.removeEventListener('paste', handlePaste)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photos.length])
+
+  const handleRemovePhoto = (id) => {
+    setPhotos((prev) => prev.filter((photo) => photo.id !== id))
+    setPhotoError('')
+  }
+
+  const handlePhotoAltTextChange = (id, value) => {
+    setPhotos((prev) =>
+      prev.map((photo) => (photo.id === id ? { ...photo, altText: value } : photo))
+    )
   }
 
   return (
@@ -425,6 +499,85 @@ function ListingRevamp({ password }) {
               </div>
             )
           })()}
+      </div>
+
+      <div className="listing-revamp-section">
+        <h2>Listing Photos</h2>
+        <p className="subhead">
+          Same upload rules as the Listing Tool — JPEG or PNG, up to 5MB each, {MAX_IMAGES} max.
+          You can also paste an image (Ctrl+V / Cmd+V) copied from anywhere.
+        </p>
+
+        <div className="field">
+          <label>Product photos (JPEG or PNG, up to {MAX_IMAGES})</label>
+          <input
+            ref={photoFileInputRef}
+            type="file"
+            accept="image/jpeg,image/png"
+            multiple
+            onChange={handlePhotosSelected}
+            className="visually-hidden-input"
+          />
+          <button
+            type="button"
+            className="upload-button"
+            onClick={() => photoFileInputRef.current?.click()}
+            disabled={photos.length >= MAX_IMAGES}
+          >
+            Upload Photos
+          </button>
+
+          {photoError && <p className="error">{photoError}</p>}
+
+          {photos.length > 0 && (
+            <div className="thumbs">
+              {photos.map((photo) => (
+                <div className="thumb" key={photo.id}>
+                  <img src={photo.dataUrl} alt={photo.name} />
+                  <button
+                    type="button"
+                    className="thumb-remove"
+                    onClick={() => handleRemovePhoto(photo.id)}
+                    aria-label={`Remove ${photo.name}`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {photos.length > 0 && (
+          <div className="result-section">
+            <h2>Alt Text</h2>
+            <p className="subhead">One entry per uploaded photo, in upload order.</p>
+            <div className="alt-text-list">
+              {photos.map((photo) => {
+                const overAlt = photo.altText.length > MAX_ALT_TEXT_LENGTH
+                return (
+                  <div className="alt-text-item" key={photo.id}>
+                    <img className="alt-text-thumb" src={photo.dataUrl} alt={photo.name} />
+                    <div className="alt-text-fields">
+                      <label htmlFor={`revamp-alt-text-${photo.id}`}>{photo.name}</label>
+                      <div className="alt-text-input-row">
+                        <input
+                          id={`revamp-alt-text-${photo.id}`}
+                          type="text"
+                          value={photo.altText}
+                          onChange={(event) => handlePhotoAltTextChange(photo.id, event.target.value)}
+                        />
+                      </div>
+                      <p className={`char-count small${overAlt ? ' over' : ''}`}>
+                        {photo.altText.length}/{MAX_ALT_TEXT_LENGTH}
+                      </p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   )

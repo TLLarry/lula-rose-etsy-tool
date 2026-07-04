@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { CATEGORIES } from './categories.js'
 import { splitAtSnippetBoundary } from './textSnippet.js'
+import { MAX_IMAGES, readFileAsDataUrl, validateImageFiles } from './imageUpload.js'
 
 const MAX_CATEGORIES = 3
 const MIN_TITLE_LENGTH = 135
@@ -8,9 +9,6 @@ const MAX_TITLE_LENGTH = 140
 const MAX_TAG_LENGTH = 20
 const MIN_HEADER_LENGTH = 150
 const MAX_HEADER_LENGTH = 155
-const MAX_IMAGES = 20
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png']
 const MAX_ALT_TEXT_LENGTH = 125
 
 const SPECS_FIELDS = [
@@ -33,15 +31,6 @@ const FACTS_FIELDS = [
 ]
 
 const EMPTY_FACTS = Object.fromEntries(FACTS_FIELDS.map(([key]) => [key, '']))
-
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
-}
 
 function EtsyTool() {
   const [description, setDescription] = useState('')
@@ -72,30 +61,7 @@ function EtsyTool() {
 
     setImageError('')
 
-    const remainingSlots = MAX_IMAGES - images.length
-    const accepted = []
-    const rejections = []
-    let skippedForCapacity = 0
-
-    selectedFiles.forEach((file) => {
-      if (accepted.length >= remainingSlots) {
-        skippedForCapacity += 1
-        return
-      }
-      if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-        rejections.push(`${file.name}: only JPEG or PNG images are allowed.`)
-        return
-      }
-      if (file.size > MAX_IMAGE_BYTES) {
-        rejections.push(`${file.name}: image is over 5MB — please use a smaller file.`)
-        return
-      }
-      accepted.push(file)
-    })
-
-    if (skippedForCapacity > 0) {
-      rejections.push(`Only ${MAX_IMAGES} images allowed — extra files were skipped.`)
-    }
+    const { accepted, rejections } = validateImageFiles(selectedFiles, images.length)
     if (rejections.length > 0) {
       setImageError(rejections.join(' '))
     }

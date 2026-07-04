@@ -177,7 +177,7 @@
   }
 }
 
-#title-writer .thumb-remove {
+.thumb-remove {
   position: absolute;
   top: 2px;
   right: 2px;
