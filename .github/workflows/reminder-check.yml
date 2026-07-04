@@ -35,17 +35,31 @@ jobs:
   run-reminder-check:
     runs-on: ubuntu-latest
     steps:
+      # Secrets/expressions are passed via `env:` and read as plain bash
+      # variables ($VAR) rather than interpolated directly into the `run:`
+      # script with ${{ }}. GitHub's ${{ }} substitution is a textual
+      # replacement that happens BEFORE bash parses the script, so if a
+      # secret's value ever contains a quote, paren, or other shell-special
+      # character, direct interpolation can produce a broken (or unsafe)
+      # command. Routing through env: + $VAR defers the substitution to
+      # bash's own variable expansion, which is safe for arbitrary content.
       - name: Determine which slot this run is for
         id: slot
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
-          if [ "${{ github.event.schedule }}" = "0 17 * * *" ]; then
+          if [ "$SCHEDULE" = "0 17 * * *" ]; then
             echo "slot=first" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "30 17 * * *" ]; then
+          elif [ "$SCHEDULE" = "30 17 * * *" ]; then
             echo "slot=followup" >> "$GITHUB_OUTPUT"
           else
             echo "slot=first" >> "$GITHUB_OUTPUT"
           fi
       - name: Call /api/run-reminder-check
+        env:
+          RENDER_APP_URL: ${{ secrets.RENDER_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SLOT: ${{ steps.slot.outputs.slot }}
         run: |
-          curl -sf -X POST "${{ secrets.RENDER_APP_URL }}/api/run-reminder-check?slot=${{ steps.slot.outputs.slot }}" \
-            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"
+          curl -sf -X POST "${RENDER_APP_URL}/api/run-reminder-check?slot=${SLOT}" \
+            -H "x-cron-secret: ${CRON_SECRET}"
