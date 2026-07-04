@@ -11,9 +11,15 @@ function readFileAsText(file) {
   })
 }
 
-function formatRevenue(revenueCents) {
-  if (revenueCents === null || revenueCents === undefined) return '—'
-  return `$${(revenueCents / 100).toFixed(2)}`
+function formatPercent(rate) {
+  if (rate === null || rate === undefined) return '—'
+  return `${(rate * 100).toFixed(1)}%`
+}
+
+function statusClass(status) {
+  if (status === 'Weak') return 'status-weak'
+  if (status === 'Strong') return 'status-strong'
+  return 'status-average'
 }
 
 function ListingRevamp({ password }) {
@@ -202,28 +208,65 @@ function ListingRevamp({ password }) {
           <div className="result">
             <div className="result-section">
               <h2>
-                {csvResult.source} — {csvResult.rowsImported} row
-                {csvResult.rowsImported === 1 ? '' : 's'}
+                {csvResult.source} — {csvResult.rowsImported} keyword
+                {csvResult.rowsImported === 1 ? '' : 's'} read
               </h2>
+
+              <h3>Winning Keywords</h3>
+              <p className="subhead">
+                The search terms that actually brought traffic to this listing, even if the
+                overall numbers are modest.
+              </p>
+              <div className="winning-keyword-list">
+                {csvResult.topKeywords.map((keyword) => (
+                  <div className="winning-keyword-card" key={keyword.keyword}>
+                    <p className="winning-keyword-headline">{keyword.keyword}</p>
+                    <p className="subhead">
+                      {keyword.visits} visit{keyword.visits === 1 ? '' : 's'}
+                      {keyword.orders !== null && (
+                        <>
+                          {' '}
+                          · {keyword.orders} order{keyword.orders === 1 ? '' : 's'} (
+                          {formatPercent(keyword.conversionRate)} conversion)
+                        </>
+                      )}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <h3>All Keywords, Ranked by Visits</h3>
               <div className="keyword-table-wrap">
-                <table className="keyword-table">
+                <table className="keyword-table score-table">
                   <thead>
                     <tr>
                       <th>Keyword</th>
-                      <th>Month</th>
                       <th>Visits</th>
-                      <th>Orders</th>
-                      <th>Revenue</th>
+                      {csvResult.hasOrderData && (
+                        <>
+                          <th>Orders</th>
+                          <th>Conversion</th>
+                        </>
+                      )}
+                      <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {csvResult.rows.map((row, index) => (
-                      <tr key={`${index}-${row.keyword}`}>
-                        <td>{row.keyword}</td>
-                        <td>{row.month}</td>
-                        <td>{row.visits === null ? '—' : row.visits}</td>
-                        <td>{row.orders === null ? '—' : row.orders}</td>
-                        <td>{formatRevenue(row.revenueCents)}</td>
+                    {csvResult.keywords.map((keyword) => (
+                      <tr key={keyword.keyword}>
+                        <td>{keyword.keyword}</td>
+                        <td>{keyword.visits}</td>
+                        {csvResult.hasOrderData && (
+                          <>
+                            <td>{keyword.orders === null ? '—' : keyword.orders}</td>
+                            <td>{formatPercent(keyword.conversionRate)}</td>
+                          </>
+                        )}
+                        <td>
+                          <span className={`status-tag ${statusClass(keyword.status)}`}>
+                            {keyword.status}
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

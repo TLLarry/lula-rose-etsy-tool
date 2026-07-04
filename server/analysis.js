@@ -468,4 +468,8 @@ export {
   getTrendSummary,
   monthsInQuarter,
   createTrendsHandler,
+  average,
+  quantile,
+  classify,
+  statusLabel,
 }

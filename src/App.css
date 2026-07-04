@@ -716,6 +716,27 @@ mark {
   padding-top: 24px;
 }
 
+.winning-keyword-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.winning-keyword-card {
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.winning-keyword-headline {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
 #keyword-analysis-page #shop-data-upload {
   padding: 0;
   border-top: none;
