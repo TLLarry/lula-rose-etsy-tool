@@ -38,6 +38,7 @@ const TABLE_NAMES = [
   'uploads',
   'reminder_runs',
   'reminder_log',
+  'competitors',
 ]
 
 // Safe to call on every boot — CREATE TABLE/INDEX IF NOT EXISTS is a no-op
@@ -113,6 +114,17 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_reminder_log_dedup ON reminder_log(event_id, check_date, slot);
+
+  -- Competitor Benchmarking (Day 22) — just the tracked list for now.
+  -- Days 23-24 add pulling the competitor's actual listing/shop data
+  -- (title, tags, photos, open year, total sales) via the Etsy API;
+  -- nothing here fetches or caches that yet, this is only the seller's
+  -- own saved list of links to track.
+  CREATE TABLE IF NOT EXISTS competitors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `)
 
 function saveListing({ etsyListingId = null, title, category = null }) {
@@ -192,6 +204,22 @@ function logReminderSend({ eventId, checkDate, slot, status, messageId, error })
     )
     .run(eventId, checkDate, slot, status, messageId ?? null, error ?? null)
   return result.lastInsertRowid
+}
+
+function listCompetitors() {
+  return db.prepare(`SELECT * FROM competitors ORDER BY created_at DESC`).all()
+}
+
+function addCompetitor(url) {
+  const result = db.prepare(`INSERT INTO competitors (url) VALUES (?)`).run(url)
+  return result.lastInsertRowid
+}
+
+// True if a row was actually deleted — lets the handler tell "already
+// gone" apart from a real failure.
+function removeCompetitor(id) {
+  const result = db.prepare(`DELETE FROM competitors WHERE id = ?`).run(id)
+  return result.changes > 0
 }
 
 // Table names are from the fixed internal list above, never from request
@@ -513,5 +541,8 @@ export {
   logReminderRun,
   hasReminderBeenSent,
   logReminderSend,
+  listCompetitors,
+  addCompetitor,
+  removeCompetitor,
   DB_PATH,
 }

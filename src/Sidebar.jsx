@@ -3,6 +3,7 @@ const NAV_ITEMS = [
   { id: 'listing-tool', label: 'Listing Tool' },
   { id: 'keyword-analysis', label: 'Keyword Analysis' },
   { id: 'tag-scores', label: 'Tag Scores' },
+  { id: 'competitors', label: 'Competitors' },
   { id: 'trends', label: 'Trends' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'listing-revamp', label: 'Listing Revamp' },

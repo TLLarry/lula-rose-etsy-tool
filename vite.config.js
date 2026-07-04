@@ -18,6 +18,7 @@ import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
 import { createLoadListingHandler } from './server/etsyListing.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
 import { createRewriteListingHandler } from './server/listingRevampRewrite.js'
+import { createCompetitorsHandler } from './server/competitors.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -49,6 +50,7 @@ function etsyTitleWriterPlugin(env) {
         '/api/rewrite-listing',
         createRewriteListingHandler(env, passwordsMatch)
       )
+      server.middlewares.use('/api/competitors', createCompetitorsHandler(env, passwordsMatch))
     },
   }
 }
