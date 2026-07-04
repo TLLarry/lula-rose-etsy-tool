@@ -11,9 +11,9 @@
      separate from --accent (buttons, focus rings, card accents) so this
      cosmetic pass doesn't reskin anything beyond the sidebar. */
   --sidebar-active-bg: #f9c4c8;
-  /* Social Otter latte — Calendar page buttons/accents only (same reason
-     as --sidebar-active-bg: kept separate from --accent so this doesn't
-     reskin buttons on every other page). */
+  /* Social Otter latte — Calendar page's Prep Now cards only (same
+     reason as --sidebar-active-bg: kept separate from --accent so this
+     doesn't reskin anything on every other page). */
   --calendar-latte: #f5ecd7;
   --calendar-latte-border: #e3cfa0;
   --social-bg: rgba(244, 243, 236, 0.5);

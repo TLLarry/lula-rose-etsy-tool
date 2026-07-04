@@ -52,8 +52,16 @@ function getPhoenixToday() {
   return { year: Number(map.year), month: Number(map.month), day: Number(map.day) }
 }
 
-function getNextMonth(year, month) {
-  return month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 }
+// Q1 = Jan-Mar, Q2 = Apr-Jun, Q3 = Jul-Sep, Q4 = Oct-Dec — same quarter
+// definition already used by src/seasonalCalendar.js's `quarter` field
+// and the Seasonal Roadmap below.
+function getQuarterForMonth(month) {
+  return QUARTERS[Math.floor((month - 1) / 3)]
+}
+
+function getNextQuarter(quarter) {
+  const index = QUARTERS.indexOf(quarter)
+  return QUARTERS[(index + 1) % QUARTERS.length]
 }
 
 // One `null` per leading blank cell before the 1st, then 1..daysInMonth —
@@ -87,10 +95,9 @@ function getEventDaysForMonth(year, month) {
   return days
 }
 
-function MonthGrid({ year, month, today }) {
+function MonthGrid({ year, month }) {
   const cells = getMonthCells(year, month)
   const eventDays = getEventDaysForMonth(year, month)
-  const isTodayMonth = today.year === year && today.month === month
 
   return (
     <div className="month-calendar">
@@ -107,12 +114,7 @@ function MonthGrid({ year, month, today }) {
           day === null ? (
             <div className="month-calendar-day empty" key={`empty-${index}`} />
           ) : (
-            <div
-              className={`month-calendar-day${
-                isTodayMonth && day === today.day ? ' today' : ''
-              }`}
-              key={day}
-            >
+            <div className="month-calendar-day" key={day}>
               <span className="month-calendar-day-number">{day}</span>
               {eventDays.has(day) && (
                 <span className="month-calendar-star" aria-label="Seasonal event">
@@ -131,12 +133,6 @@ function Calendar({ password }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
-  const [sendingTest, setSendingTest] = useState(false)
-  const [testResult, setTestResult] = useState(null)
-  const [testError, setTestError] = useState('')
-  const [runningSlot, setRunningSlot] = useState(null)
-  const [runResult, setRunResult] = useState(null)
-  const [runError, setRunError] = useState('')
   const [phoenixToday, setPhoenixToday] = useState(getPhoenixToday)
 
   useEffect(() => {
@@ -161,11 +157,11 @@ function Calendar({ password }) {
     }
   }, [password])
 
-  // Re-checks the real Phoenix date once a minute so the grid rolls over
-  // to the next month (or year) on its own if this tab is just left open
-  // — no refresh, no button, no message. Only actually re-renders when
-  // the date has genuinely changed, so this is effectively free the rest
-  // of the time.
+  // Re-checks the real Phoenix date once a minute so the grid (and the
+  // quarter-aware sections below) roll over on their own if this tab is
+  // just left open — no refresh, no button, no message. Only actually
+  // re-renders when the date has genuinely changed, so this is
+  // effectively free the rest of the time.
   useEffect(() => {
     const interval = setInterval(() => {
       setPhoenixToday((previous) => {
@@ -180,46 +176,20 @@ function Calendar({ password }) {
     return () => clearInterval(interval)
   }, [])
 
-  const handleSendTestReminder = async () => {
-    setSendingTest(true)
-    setTestResult(null)
-    setTestError('')
-    try {
-      const response = await fetch('/api/send-test-email', {
-        method: 'POST',
-        headers: { 'x-app-password': password },
-      })
-      const body = await response.json()
-      if (!response.ok) throw new Error(body.error || 'Failed to send the test reminder.')
-      setTestResult(body)
-    } catch (err) {
-      setTestError(err.message)
-    } finally {
-      setSendingTest(false)
-    }
-  }
+  const currentQuarter = getQuarterForMonth(phoenixToday.month)
+  const nextQuarter = getNextQuarter(currentQuarter)
 
-  const handleRunReminderCheck = async (slot) => {
-    setRunningSlot(slot)
-    setRunResult(null)
-    setRunError('')
-    try {
-      const response = await fetch(`/api/run-reminder-check?slot=${slot}`, {
-        method: 'POST',
-        headers: { 'x-app-password': password },
-      })
-      const body = await response.json()
-      if (!response.ok) throw new Error(body.error || 'Failed to run the reminder check.')
-      setRunResult(body)
-    } catch (err) {
-      setRunError(err.message)
-    } finally {
-      setRunningSlot(null)
-    }
-  }
-
-  const nextMonth = getNextMonth(phoenixToday.year, phoenixToday.month)
   const allDated = data ? [...data.prepNow, ...data.comingUp] : []
+  // Prep Now = next quarter's holidays (never "happening now" — that's
+  // the point of prepping ahead). Coming Up = current quarter only, not
+  // everything dated all the way out to next year. Both filters run off
+  // each event's own `quarter` field (already used by Seasonal Roadmap
+  // below), re-evaluated every time phoenixToday changes, so both
+  // sections roll over on their own at each quarter boundary.
+  const prepNowEvents = allDated.filter((event) => event.quarter.split('/').includes(nextQuarter))
+  const comingUpEvents = allDated.filter((event) =>
+    event.quarter.split('/').includes(currentQuarter)
+  )
   const byQuarter = QUARTERS.map((quarter) => ({
     quarter,
     events: allDated.filter((event) => event.quarter.split('/').includes(quarter)),
@@ -228,73 +198,10 @@ function Calendar({ password }) {
   return (
     <section id="calendar-page">
       <h1>Calendar</h1>
-      <p className="subhead">
-        Seasonal planning — when to start listing for what's coming up. Purely informational,
-        based on {data ? data.today : 'today'} and the events in src/seasonalCalendar.js.
-      </p>
+      <p className="subhead">Seasonal planning — when to start listing for what's coming up.</p>
 
       <div className="calendar-section">
-        <div className="live-calendar-section">
-          <MonthGrid year={phoenixToday.year} month={phoenixToday.month} today={phoenixToday} />
-          <MonthGrid year={nextMonth.year} month={nextMonth.month} today={phoenixToday} />
-        </div>
-      </div>
-
-      <div className="calendar-test-email">
-        <button type="button" onClick={handleSendTestReminder} disabled={sendingTest}>
-          {sendingTest ? 'Sending…' : 'Send me a test reminder'}
-        </button>
-        {testError && <p className="error">{testError}</p>}
-        {testResult && (
-          <p className="calendar-test-success">
-            Sent "{testResult.subject}" to {testResult.to} (based on {testResult.eventName}).
-          </p>
-        )}
-      </div>
-
-      <div className="calendar-test-email">
-        <p className="subhead">
-          Scheduled reminders normally run automatically at 10:00am and 10:30am Phoenix time (see
-          setup notes for how that's wired up). These buttons run the exact same check right now,
-          for real — useful for testing without waiting. Running the same slot twice in one day
-          won't double-send; the second run reports those events as "skipped".
-        </p>
-        <div className="calendar-run-buttons">
-          <button
-            type="button"
-            onClick={() => handleRunReminderCheck('first')}
-            disabled={runningSlot !== null}
-          >
-            {runningSlot === 'first' ? 'Running…' : "Run today's check (10:00am slot)"}
-          </button>
-          <button
-            type="button"
-            onClick={() => handleRunReminderCheck('followup')}
-            disabled={runningSlot !== null}
-          >
-            {runningSlot === 'followup' ? 'Running…' : "Run today's check (10:30am slot)"}
-          </button>
-        </div>
-        {runError && <p className="error">{runError}</p>}
-        {runResult && (
-          <div className="calendar-test-success">
-            <p>
-              {runResult.checkDate} · {runResult.slot} slot — {runResult.eventsMatched} event
-              {runResult.eventsMatched === 1 ? '' : 's'} matched, {runResult.sent} sent,{' '}
-              {runResult.skipped} skipped, {runResult.failed} failed.
-            </p>
-            {runResult.results.length > 0 && (
-              <ul>
-                {runResult.results.map((item) => (
-                  <li key={item.eventId}>
-                    {item.eventName}: {item.outcome}
-                    {item.error ? ` (${item.error})` : ''}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
+        <MonthGrid year={phoenixToday.year} month={phoenixToday.month} />
       </div>
 
       {error && <p className="error">{error}</p>}
@@ -302,15 +209,13 @@ function Calendar({ password }) {
 
       {!loading && data && (
         <>
-          <div className="calendar-section">
+          <div className="calendar-section prep-now-section">
             <h2>Prep Now</h2>
-            {data.prepNow.length === 0 ? (
-              <p className="subhead">
-                Nothing is inside its lead-time window today — see what's coming up below.
-              </p>
+            {prepNowEvents.length === 0 ? (
+              <p className="subhead">Nothing dated in {nextQuarter}, the next quarter.</p>
             ) : (
               <div className="calendar-prep-list">
-                {data.prepNow.map((event) => (
+                {prepNowEvents.map((event) => (
                   <div className="calendar-prep-card" key={event.id}>
                     <p className="calendar-prep-headline">
                       {event.name} is {formatTimeUntil(event.daysUntil)} — time to list your{' '}
@@ -328,11 +233,11 @@ function Calendar({ password }) {
 
           <div className="calendar-section">
             <h2>Coming Up</h2>
-            {data.comingUp.length === 0 ? (
-              <p className="subhead">Nothing else dated on the calendar right now.</p>
+            {comingUpEvents.length === 0 ? (
+              <p className="subhead">Nothing else dated in {currentQuarter}, this quarter.</p>
             ) : (
               <div className="calendar-event-list">
-                {data.comingUp.map((event) => (
+                {comingUpEvents.map((event) => (
                   <div className="calendar-event" key={event.id}>
                     <div className="calendar-event-main">
                       <span className="calendar-event-name">{event.name}</span>
@@ -352,7 +257,10 @@ function Calendar({ password }) {
             <h2>Seasonal Roadmap</h2>
             <div className="calendar-quarter-grid">
               {byQuarter.map(({ quarter, events }) => (
-                <div className="calendar-quarter-card" key={quarter}>
+                <div
+                  className={`calendar-quarter-card${quarter === currentQuarter ? ' current' : ''}`}
+                  key={quarter}
+                >
                   <h3>{quarter}</h3>
                   {events.length === 0 ? (
                     <p className="subhead">Nothing dated this quarter.</p>
