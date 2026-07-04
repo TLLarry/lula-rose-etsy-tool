@@ -1,7 +1,24 @@
 import { useEffect, useState } from 'react'
 import { CATEGORIES } from './categories.js'
+import { SEASONAL_EVENTS } from './seasonalCalendar.js'
 
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4']
+const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+]
+const PHOENIX_TIMEZONE = 'America/Phoenix'
 
 function categoryLabel(id) {
   const match = CATEGORIES.find((category) => category.id === id)
@@ -19,6 +36,97 @@ function formatTimeUntil(daysUntil) {
   return `${weeks} weeks out`
 }
 
+// Reads TODAY's real calendar date directly from the browser's own clock,
+// projected onto America/Phoenix (Mountain Standard year-round, no DST) —
+// not from any server response, so this is accurate the instant the tab
+// is open and stays accurate as the client's clock ticks forward,
+// independent of when /api/calendar last happened to load.
+function getPhoenixToday() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: PHOENIX_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return { year: Number(map.year), month: Number(map.month), day: Number(map.day) }
+}
+
+function getNextMonth(year, month) {
+  return month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 }
+}
+
+// One `null` per leading blank cell before the 1st, then 1..daysInMonth —
+// day-of-week alignment for a Sunday-first grid.
+function getMonthCells(year, month) {
+  const firstWeekday = new Date(year, month - 1, 1).getDay()
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const cells = Array(firstWeekday).fill(null)
+  for (let day = 1; day <= daysInMonth; day++) cells.push(day)
+  return cells
+}
+
+// Which day-of-month numbers get a star: the single anchor date of every
+// dated seasonal event that falls in this year/month. Deliberately NOT
+// the full windowDays span for multi-week window events (wedding season,
+// back to school, teacher appreciation) - marking ~150 days for wedding
+// season alone would bury the actual point of a glance-able star. A star
+// means "this specific date is a named holiday/occasion," matching how a
+// plain wall calendar marks single-day holidays. Year-round evergreen
+// events (birthdays, etc.) have no fixed date and are skipped.
+function getEventDaysForMonth(year, month) {
+  const days = new Set()
+  SEASONAL_EVENTS.forEach((event) => {
+    if (event.recurring === 'year-round') return
+    const anchor =
+      typeof event.computeDate === 'function'
+        ? event.computeDate(year)
+        : { month: event.month, day: event.day }
+    if (anchor.month === month) days.add(anchor.day)
+  })
+  return days
+}
+
+function MonthGrid({ year, month, today }) {
+  const cells = getMonthCells(year, month)
+  const eventDays = getEventDaysForMonth(year, month)
+  const isTodayMonth = today.year === year && today.month === month
+
+  return (
+    <div className="month-calendar">
+      <h3 className="month-calendar-label">
+        {MONTH_NAMES[month - 1]} {year}
+      </h3>
+      <div className="month-calendar-grid">
+        {WEEKDAY_LABELS.map((label, index) => (
+          <div className="month-calendar-weekday" key={index}>
+            {label}
+          </div>
+        ))}
+        {cells.map((day, index) =>
+          day === null ? (
+            <div className="month-calendar-day empty" key={`empty-${index}`} />
+          ) : (
+            <div
+              className={`month-calendar-day${
+                isTodayMonth && day === today.day ? ' today' : ''
+              }`}
+              key={day}
+            >
+              <span className="month-calendar-day-number">{day}</span>
+              {eventDays.has(day) && (
+                <span className="month-calendar-star" aria-label="Seasonal event">
+                  ⭐
+                </span>
+              )}
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Calendar({ password }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
@@ -29,6 +137,7 @@ function Calendar({ password }) {
   const [runningSlot, setRunningSlot] = useState(null)
   const [runResult, setRunResult] = useState(null)
   const [runError, setRunError] = useState('')
+  const [phoenixToday, setPhoenixToday] = useState(getPhoenixToday)
 
   useEffect(() => {
     let cancelled = false
@@ -51,6 +160,25 @@ function Calendar({ password }) {
       cancelled = true
     }
   }, [password])
+
+  // Re-checks the real Phoenix date once a minute so the grid rolls over
+  // to the next month (or year) on its own if this tab is just left open
+  // — no refresh, no button, no message. Only actually re-renders when
+  // the date has genuinely changed, so this is effectively free the rest
+  // of the time.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPhoenixToday((previous) => {
+        const next = getPhoenixToday()
+        const changed =
+          next.year !== previous.year ||
+          next.month !== previous.month ||
+          next.day !== previous.day
+        return changed ? next : previous
+      })
+    }, 60000)
+    return () => clearInterval(interval)
+  }, [])
 
   const handleSendTestReminder = async () => {
     setSendingTest(true)
@@ -90,6 +218,7 @@ function Calendar({ password }) {
     }
   }
 
+  const nextMonth = getNextMonth(phoenixToday.year, phoenixToday.month)
   const allDated = data ? [...data.prepNow, ...data.comingUp] : []
   const byQuarter = QUARTERS.map((quarter) => ({
     quarter,
@@ -103,6 +232,13 @@ function Calendar({ password }) {
         Seasonal planning — when to start listing for what's coming up. Purely informational,
         based on {data ? data.today : 'today'} and the events in src/seasonalCalendar.js.
       </p>
+
+      <div className="calendar-section">
+        <div className="live-calendar-section">
+          <MonthGrid year={phoenixToday.year} month={phoenixToday.month} today={phoenixToday} />
+          <MonthGrid year={nextMonth.year} month={nextMonth.month} today={phoenixToday} />
+        </div>
+      </div>
 
       <div className="calendar-test-email">
         <button type="button" onClick={handleSendTestReminder} disabled={sendingTest}>
@@ -210,18 +346,6 @@ function Calendar({ password }) {
                 ))}
               </div>
             )}
-          </div>
-
-          <div className="calendar-section">
-            <h2>Always in Season</h2>
-            <div className="calendar-evergreen-list">
-              {data.evergreen.map((event) => (
-                <div className="calendar-evergreen-item" key={event.id}>
-                  <span className="calendar-event-name">{event.name}</span>
-                  <span className="calendar-event-meta">{formatCategories(event.categories)}</span>
-                </div>
-              ))}
-            </div>
           </div>
 
           <div className="calendar-section">
