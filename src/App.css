@@ -708,6 +708,14 @@ mark {
   color: var(--text);
 }
 
+.listing-revamp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+}
+
 #keyword-analysis-page #shop-data-upload {
   padding: 0;
   border-top: none;

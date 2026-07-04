@@ -1,10 +1,32 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+
+const MAX_CSV_BYTES = 5 * 1024 * 1024
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
+}
+
+function formatRevenue(revenueCents) {
+  if (revenueCents === null || revenueCents === undefined) return '—'
+  return `$${(revenueCents / 100).toFixed(2)}`
+}
 
 function ListingRevamp({ password }) {
   const [listingUrl, setListingUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [listing, setListing] = useState(null)
   const [error, setError] = useState('')
+
+  const [csvFile, setCsvFile] = useState(null)
+  const [parsingCsv, setParsingCsv] = useState(false)
+  const [csvResult, setCsvResult] = useState(null)
+  const [csvError, setCsvError] = useState('')
+  const csvFileInputRef = useRef(null)
 
   const handleLoadListing = async () => {
     setLoading(true)
@@ -23,6 +45,48 @@ function ListingRevamp({ password }) {
       setError(err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleCsvFileSelected = (event) => {
+    const selected = event.target.files?.[0] || null
+    event.target.value = '' // allow re-selecting the same file after clearing
+    setCsvError('')
+    setCsvResult(null)
+    if (!selected) return
+
+    if (!selected.name.toLowerCase().endsWith('.csv')) {
+      setCsvError('Please choose a .csv file.')
+      setCsvFile(null)
+      return
+    }
+    if (selected.size > MAX_CSV_BYTES) {
+      setCsvError('That file is over 5MB — please use a smaller export.')
+      setCsvFile(null)
+      return
+    }
+    setCsvFile(selected)
+  }
+
+  const handleParseCsv = async () => {
+    if (!csvFile) return
+    setParsingCsv(true)
+    setCsvError('')
+    setCsvResult(null)
+    try {
+      const content = await readFileAsText(csvFile)
+      const response = await fetch('/api/parse-listing-csv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({ filename: csvFile.name, content }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to read that CSV.')
+      setCsvResult(data)
+    } catch (err) {
+      setCsvError(err.message)
+    } finally {
+      setParsingCsv(false)
     }
   }
 
@@ -97,6 +161,78 @@ function ListingRevamp({ password }) {
           </div>
         </div>
       )}
+
+      <div className="listing-revamp-section">
+        <h2>Stats for This Listing</h2>
+        <p className="subhead">
+          Upload this listing's Etsy Stats, eRank, or EverBee export (.csv) to see its stats
+          here. This works independently of the link above for now — since the Etsy API key is
+          still pending approval, there's no live listing to connect it to yet, but the format
+          detection is exactly what Keyword Analysis uses shop-wide.
+        </p>
+
+        <div className="field">
+          <label>CSV file</label>
+          <input
+            ref={csvFileInputRef}
+            type="file"
+            accept=".csv"
+            onChange={handleCsvFileSelected}
+            className="visually-hidden-input"
+          />
+          <div className="upload-row">
+            <button
+              type="button"
+              className="upload-button"
+              onClick={() => csvFileInputRef.current?.click()}
+            >
+              Choose File
+            </button>
+            <span className="upload-filename">{csvFile ? csvFile.name : 'No file chosen'}</span>
+          </div>
+        </div>
+
+        <button type="button" onClick={handleParseCsv} disabled={!csvFile || parsingCsv}>
+          {parsingCsv ? 'Reading…' : 'Read CSV'}
+        </button>
+
+        {csvError && <p className="error">{csvError}</p>}
+
+        {csvResult && (
+          <div className="result">
+            <div className="result-section">
+              <h2>
+                {csvResult.source} — {csvResult.rowsImported} row
+                {csvResult.rowsImported === 1 ? '' : 's'}
+              </h2>
+              <div className="keyword-table-wrap">
+                <table className="keyword-table">
+                  <thead>
+                    <tr>
+                      <th>Keyword</th>
+                      <th>Month</th>
+                      <th>Visits</th>
+                      <th>Orders</th>
+                      <th>Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {csvResult.rows.map((row, index) => (
+                      <tr key={`${index}-${row.keyword}`}>
+                        <td>{row.keyword}</td>
+                        <td>{row.month}</td>
+                        <td>{row.visits === null ? '—' : row.visits}</td>
+                        <td>{row.orders === null ? '—' : row.orders}</td>
+                        <td>{formatRevenue(row.revenueCents)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   )
 }

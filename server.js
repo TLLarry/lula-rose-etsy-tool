@@ -22,6 +22,7 @@ import { createCalendarHandler } from './server/calendar.js'
 import { createSendTestEmailHandler } from './server/reminders.js'
 import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
 import { createLoadListingHandler } from './server/etsyListing.js'
+import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
 // real environment variables set in the dashboard, so there's no .env file
@@ -77,6 +78,7 @@ app.use('/api/calendar', createCalendarHandler(env, passwordsMatch))
 app.use('/api/send-test-email', createSendTestEmailHandler(env, passwordsMatch))
 app.use('/api/run-reminder-check', createRunReminderCheckHandler(env))
 app.use('/api/load-listing', createLoadListingHandler(env, passwordsMatch))
+app.use('/api/parse-listing-csv', createParseListingCsvHandler(env, passwordsMatch))
 
 app.use(express.static(distDir))
 

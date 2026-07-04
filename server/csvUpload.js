@@ -209,4 +209,4 @@ function createUploadCsvHandler(env) {
   }
 }
 
-export { createUploadCsvHandler }
+export { createUploadCsvHandler, parseCsv }
