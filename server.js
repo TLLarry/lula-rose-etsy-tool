@@ -21,6 +21,7 @@ import { createTagScoresHandler, createTrendsHandler } from './server/analysis.j
 import { createCalendarHandler } from './server/calendar.js'
 import { createSendTestEmailHandler } from './server/reminders.js'
 import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
+import { createLoadListingHandler } from './server/etsyListing.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
 // real environment variables set in the dashboard, so there's no .env file
@@ -55,6 +56,8 @@ const env = {
   MAILERSEND_FROM_NAME: process.env.MAILERSEND_FROM_NAME,
   REMINDER_EMAIL: process.env.REMINDER_EMAIL,
   CRON_SECRET: process.env.CRON_SECRET,
+  ETSY_API_KEY: process.env.ETSY_API_KEY,
+  ETSY_SHARED_SECRET: process.env.ETSY_SHARED_SECRET,
 }
 
 const app = express()
@@ -73,6 +76,7 @@ app.use('/api/trends', createTrendsHandler(env, passwordsMatch))
 app.use('/api/calendar', createCalendarHandler(env, passwordsMatch))
 app.use('/api/send-test-email', createSendTestEmailHandler(env, passwordsMatch))
 app.use('/api/run-reminder-check', createRunReminderCheckHandler(env))
+app.use('/api/load-listing', createLoadListingHandler(env, passwordsMatch))
 
 app.use(express.static(distDir))
 

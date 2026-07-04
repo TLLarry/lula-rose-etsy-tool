@@ -15,6 +15,7 @@ import { createTagScoresHandler, createTrendsHandler } from './server/analysis.j
 import { createCalendarHandler } from './server/calendar.js'
 import { createSendTestEmailHandler } from './server/reminders.js'
 import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
+import { createLoadListingHandler } from './server/etsyListing.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -37,6 +38,7 @@ function etsyTitleWriterPlugin(env) {
         createSendTestEmailHandler(env, passwordsMatch)
       )
       server.middlewares.use('/api/run-reminder-check', createRunReminderCheckHandler(env))
+      server.middlewares.use('/api/load-listing', createLoadListingHandler(env, passwordsMatch))
     },
   }
 }
