@@ -53,6 +53,10 @@ function KeywordAnalysis({ password }) {
   return (
     <section id="keyword-analysis-page">
       <h1>Keyword Analysis</h1>
+      <p className="subhead">
+        Upload your Etsy Stats, eRank, or EverBee export to see which keywords are actually
+        working.
+      </p>
 
       <ShopDataUpload password={password} onUploadComplete={handleUploadComplete} />
 

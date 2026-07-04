@@ -1,26 +1,3 @@
-#title-writer {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 16px;
-  text-align: left;
-  padding: 48px 32px;
-  max-width: 640px;
-  margin: 0 auto;
-  flex-grow: 1;
-  width: 100%;
-  box-sizing: border-box;
-
-  @media (max-width: 1024px) {
-    padding: 32px 20px;
-  }
-}
-
-#title-writer h1 {
-  text-align: left;
-  margin: 0;
-}
-
 .subhead {
   color: var(--text);
   margin-bottom: 8px;
@@ -603,12 +580,12 @@ mark {
 }
 
 .sidebar-link.active {
-  background: var(--accent);
-  color: #fff;
+  background: var(--sidebar-active-bg);
+  color: var(--text-h);
 
   &:hover {
-    background: var(--accent);
-    color: #fff;
+    background: var(--sidebar-active-bg);
+    color: var(--text-h);
   }
 }
 
@@ -619,8 +596,12 @@ mark {
   flex-direction: column;
 }
 
-/* ---- Dashboard / Keyword Analysis / Calendar pages ---- */
+/* ---- Every page container (shared cosmetic pass #1: header size/
+   alignment, header buffer, left-edge padding — applies identically to
+   every page, including the Listing Tool, which used to have its own
+   near-duplicate rule set here with a narrower 640px max-width) ---- */
 
+#title-writer,
 #dashboard-page,
 #keyword-analysis-page,
 #tag-scores-page,
@@ -633,7 +614,7 @@ mark {
   align-items: stretch;
   gap: 16px;
   text-align: left;
-  padding: 48px 32px;
+  padding: 48px 56px;
   max-width: 720px;
   margin: 0 auto;
   width: 100%;
@@ -645,6 +626,7 @@ mark {
   }
 }
 
+#title-writer h1,
 #dashboard-page h1,
 #keyword-analysis-page h1,
 #tag-scores-page h1,
@@ -652,8 +634,26 @@ mark {
 #calendar-page h1,
 #listing-revamp-page h1,
 #competitor-benchmarking-page h1 {
-  text-align: left;
+  text-align: center;
+  font-size: 32px;
   margin: 0;
+}
+
+/* The subtitle directly under the page title, as one header block — the
+   buffer below (roughly 1.5-2in) separates that block from the page's
+   real content. Only the FIRST subhead right after h1 is targeted, so
+   every other .subhead used elsewhere on a page (loading/empty states,
+   notes) keeps its normal small margin. */
+#title-writer h1 + .subhead,
+#dashboard-page h1 + .subhead,
+#keyword-analysis-page h1 + .subhead,
+#tag-scores-page h1 + .subhead,
+#trends-page h1 + .subhead,
+#calendar-page h1 + .subhead,
+#listing-revamp-page h1 + .subhead,
+#competitor-benchmarking-page h1 + .subhead {
+  text-align: center;
+  margin-bottom: 160px;
 }
 
 .summary-cards {

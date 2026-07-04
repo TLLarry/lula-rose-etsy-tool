@@ -7,6 +7,10 @@
   --accent: #aa3bff;
   --accent-bg: rgba(170, 59, 255, 0.1);
   --accent-border: rgba(170, 59, 255, 0.5);
+  /* Social Otter blush/salmon — sidebar active-nav highlight only. Kept
+     separate from --accent (buttons, focus rings, card accents) so this
+     cosmetic pass doesn't reskin anything beyond the sidebar. */
+  --sidebar-active-bg: #f9c4c8;
   --social-bg: rgba(244, 243, 236, 0.5);
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
