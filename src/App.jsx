@@ -8,6 +8,7 @@ import KeywordAnalysis from './KeywordAnalysis'
 import TagScores from './TagScores'
 import Trends from './Trends'
 import Calendar from './Calendar'
+import ListingRevamp from './ListingRevamp'
 
 function App() {
   // In-memory only — resets on tab close/refresh, never persisted to
@@ -41,6 +42,7 @@ function App() {
         {activePage === 'tag-scores' && <TagScores password={password} />}
         {activePage === 'trends' && <Trends password={password} />}
         {activePage === 'calendar' && <Calendar password={password} />}
+        {activePage === 'listing-revamp' && <ListingRevamp />}
       </main>
     </div>
   )

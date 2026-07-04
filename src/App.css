@@ -625,7 +625,8 @@ mark {
 #keyword-analysis-page,
 #tag-scores-page,
 #trends-page,
-#calendar-page {
+#calendar-page,
+#listing-revamp-page {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -647,7 +648,8 @@ mark {
 #keyword-analysis-page h1,
 #tag-scores-page h1,
 #trends-page h1,
-#calendar-page h1 {
+#calendar-page h1,
+#listing-revamp-page h1 {
   text-align: left;
   margin: 0;
 }
@@ -691,6 +693,14 @@ mark {
 }
 
 .charts-placeholder {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--text);
+}
+
+.theme-options-placeholder {
   border: 1px dashed var(--border);
   border-radius: 12px;
   padding: 48px 20px;

@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { id: 'tag-scores', label: 'Tag Scores' },
   { id: 'trends', label: 'Trends' },
   { id: 'calendar', label: 'Calendar' },
+  { id: 'listing-revamp', label: 'Listing Revamp' },
 ]
 
 function Sidebar({ activePage, onNavigate }) {
