@@ -682,6 +682,15 @@ mark {
   margin-bottom: 80px;
 }
 
+/* Overrides the shared 160px header buffer above for Listing Revamp
+   only — shrinks the gap between the subtitle and the content below to
+   about 1.5in total (this rule's 128px + the container's own 16px gap),
+   shifting the whole content block up as one unit. Nothing else on this
+   page's spacing is touched. */
+#listing-revamp-page h1 + .subhead {
+  margin-bottom: 128px;
+}
+
 .summary-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

@@ -245,6 +245,8 @@ function ListingRevamp({ password }) {
       <button type="button" onClick={handleLoadListing} disabled={!listingUrl.trim() || loading}>
         {loading ? 'Loading…' : 'Load Listing'}
       </button>
+      <button type="button">Revamp My Listing</button>
+      <button type="button">Combine Both</button>
 
       {error && <p className="error">{error}</p>}
 
