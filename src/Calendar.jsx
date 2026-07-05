@@ -215,6 +215,28 @@ function Calendar({ password }) {
 
       {!loading && data && (
         <>
+          <div className="calendar-section">
+            <h2>Upcoming Events {currentQuarter}</h2>
+            {upcomingEvents.length === 0 ? (
+              <p className="subhead">Nothing else dated in {currentQuarter}, this quarter.</p>
+            ) : (
+              <div className="calendar-event-list">
+                {upcomingEvents.map((event) => (
+                  <div className="calendar-event" key={event.id}>
+                    <div className="calendar-event-main">
+                      <span className="calendar-event-name">{event.name}</span>
+                      <span className="calendar-event-date">{event.eventDate}</span>
+                    </div>
+                    <div className="calendar-event-meta">
+                      <span>{formatTimeUntil(event.daysUntil)}</span>
+                      <span>{formatCategories(event.categories)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="calendar-section prep-now-section">
             <h2>{nextQuarter} Prep</h2>
             {prepEvents.length === 0 ? (
@@ -249,28 +271,6 @@ function Calendar({ password }) {
                     <ul>
                       <li>Keywords will populate from your shop once connected.</li>
                     </ul>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="calendar-section">
-            <h2>Upcoming Events {currentQuarter}</h2>
-            {upcomingEvents.length === 0 ? (
-              <p className="subhead">Nothing else dated in {currentQuarter}, this quarter.</p>
-            ) : (
-              <div className="calendar-event-list">
-                {upcomingEvents.map((event) => (
-                  <div className="calendar-event" key={event.id}>
-                    <div className="calendar-event-main">
-                      <span className="calendar-event-name">{event.name}</span>
-                      <span className="calendar-event-date">{event.eventDate}</span>
-                    </div>
-                    <div className="calendar-event-meta">
-                      <span>{formatTimeUntil(event.daysUntil)}</span>
-                      <span>{formatCategories(event.categories)}</span>
-                    </div>
                   </div>
                 ))}
               </div>
