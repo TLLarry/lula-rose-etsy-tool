@@ -76,6 +76,12 @@ function Dashboard() {
           </ul>
         </div>
       </div>
+
+      <h2>Trends</h2>
+      <p className="subhead">
+        Compare two periods — the current quarter and previous quarter — to see which keywords
+        are climbing, falling, new, or dropped.
+      </p>
     </section>
   )
 }
