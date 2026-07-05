@@ -180,16 +180,22 @@ function Calendar({ password }) {
   const nextQuarter = getNextQuarter(currentQuarter)
 
   const allDated = data ? [...data.prepNow, ...data.comingUp] : []
-  // Prep Now = next quarter's holidays (never "happening now" — that's
-  // the point of prepping ahead). Coming Up = current quarter only, not
-  // everything dated all the way out to next year. Both filters run off
-  // each event's own `quarter` field (already used by Seasonal Roadmap
-  // below), re-evaluated every time phoenixToday changes, so both
+  // Prep = next quarter's holidays (never "happening now" — that's the
+  // point of prepping ahead), also reused below for the Upcoming
+  // Keywords cards so both next-quarter sections show the same holiday
+  // set. Upcoming Events = current quarter only, excluding Wedding
+  // Season specifically (per this page's own request — Seasonal Roadmap
+  // below is untouched and still lists it), sorted earliest-first since
+  // concatenating the already-sorted prepNow/comingUp arrays doesn't
+  // guarantee the combined, re-filtered result stays in date order.
+  // Everything here re-derives from the live phoenixToday state, so both
   // sections roll over on their own at each quarter boundary.
-  const prepNowEvents = allDated.filter((event) => event.quarter.split('/').includes(nextQuarter))
-  const comingUpEvents = allDated.filter((event) =>
-    event.quarter.split('/').includes(currentQuarter)
-  )
+  const prepEvents = allDated.filter((event) => event.quarter.split('/').includes(nextQuarter))
+  const upcomingEvents = allDated
+    .filter(
+      (event) => event.quarter.split('/').includes(currentQuarter) && event.id !== 'wedding-season'
+    )
+    .sort((a, b) => a.daysUntil - b.daysUntil)
   const byQuarter = QUARTERS.map((quarter) => ({
     quarter,
     events: allDated.filter((event) => event.quarter.split('/').includes(quarter)),
@@ -210,12 +216,12 @@ function Calendar({ password }) {
       {!loading && data && (
         <>
           <div className="calendar-section prep-now-section">
-            <h2>Prep Now</h2>
-            {prepNowEvents.length === 0 ? (
+            <h2>{nextQuarter} Prep</h2>
+            {prepEvents.length === 0 ? (
               <p className="subhead">Nothing dated in {nextQuarter}, the next quarter.</p>
             ) : (
               <div className="calendar-prep-list">
-                {prepNowEvents.map((event) => (
+                {prepEvents.map((event) => (
                   <div className="calendar-prep-card" key={event.id}>
                     <p className="calendar-prep-headline">
                       {event.name} is {formatTimeUntil(event.daysUntil)} — time to list your{' '}
@@ -232,12 +238,30 @@ function Calendar({ password }) {
           </div>
 
           <div className="calendar-section">
-            <h2>Coming Up</h2>
-            {comingUpEvents.length === 0 ? (
+            <h2>Upcoming Keywords {nextQuarter}</h2>
+            {prepEvents.length === 0 ? (
+              <p className="subhead">Nothing dated in {nextQuarter}, the next quarter.</p>
+            ) : (
+              <div className="calendar-quarter-grid">
+                {prepEvents.map((event) => (
+                  <div className="calendar-quarter-card" key={event.id}>
+                    <h3>{event.name}</h3>
+                    <ul>
+                      <li>Keywords will populate from your shop once connected.</li>
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="calendar-section">
+            <h2>Upcoming Events {currentQuarter}</h2>
+            {upcomingEvents.length === 0 ? (
               <p className="subhead">Nothing else dated in {currentQuarter}, this quarter.</p>
             ) : (
               <div className="calendar-event-list">
-                {comingUpEvents.map((event) => (
+                {upcomingEvents.map((event) => (
                   <div className="calendar-event" key={event.id}>
                     <div className="calendar-event-main">
                       <span className="calendar-event-name">{event.name}</span>
