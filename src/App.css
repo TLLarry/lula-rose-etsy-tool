@@ -663,6 +663,24 @@ mark {
   max-width: none;
 }
 
+/* Overrides the shared 160px header buffer above — the Dashboard's rows
+   start right under the subtitle instead, using just the container's
+   own 16px gap. */
+#dashboard-page h1 + .subhead {
+  margin-bottom: 0;
+}
+
+/* Extra breathing room BETWEEN each dashboard row, on top of the
+   container's own 16px gap — the first row only needs the (now
+   minimal) header buffer above, not this too. */
+.dashboard-row {
+  margin-top: 40px;
+}
+
+.dashboard-row:first-of-type {
+  margin-top: 0;
+}
+
 .summary-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

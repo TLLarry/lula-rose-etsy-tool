@@ -10,7 +10,7 @@ function Dashboard() {
       <h1>Welcome back</h1>
       <p className="subhead">Here's your shop at a glance.</p>
 
-      <div className="summary-cards">
+      <div className="dashboard-row summary-cards">
         <div className="summary-card">
           <p className="summary-card-label">Top Keywords</p>
           <p className="summary-card-value">—</p>
@@ -20,6 +20,21 @@ function Dashboard() {
           <p className="summary-card-label">Low Performing Keywords</p>
           <p className="summary-card-value">—</p>
         </div>
+      </div>
+
+      <div className="dashboard-row summary-cards">
+        <div className="summary-card">
+          <p className="summary-card-label">Visitors This Week</p>
+          <p className="summary-card-value">—</p>
+        </div>
+        <div className="summary-card">
+          <p className="summary-card-label">Weekly Conversion Rate</p>
+          <p className="summary-card-value">—</p>
+          <p className="summary-card-note">Orders ÷ visits, vs. Etsy's ~2% benchmark</p>
+        </div>
+      </div>
+
+      <div className="dashboard-row summary-cards">
         <div className="summary-card">
           <p className="summary-card-label">Orders</p>
           <p className="summary-card-value">—</p>
@@ -32,13 +47,9 @@ function Dashboard() {
           <p className="summary-card-label">Net Sales</p>
           <p className="summary-card-value">—</p>
         </div>
-        <div className="summary-card">
-          <p className="summary-card-label">Visitors This Week</p>
-          <p className="summary-card-value">—</p>
-        </div>
       </div>
 
-      <div className="dashboard-performers-row">
+      <div className="dashboard-row dashboard-performers-row">
         <div className="dashboard-performers-box">
           <h2>Top 3 Performing Listings</h2>
           <ul className="dashboard-performer-list">
