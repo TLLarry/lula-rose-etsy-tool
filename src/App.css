@@ -41,17 +41,14 @@
   padding: 10px 20px;
   border-radius: 8px;
   border: none;
-  color: #fff;
-  background: var(--accent);
+  color: var(--text-h);
+  background: var(--latte);
   cursor: pointer;
   transition: opacity 0.2s;
 
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-  }
-  &:not(:disabled):hover {
-    opacity: 0.9;
   }
 }
 
@@ -126,6 +123,17 @@
     background: var(--accent-bg);
     border-color: var(--accent-border);
   }
+}
+
+/* Upload Photos only (not the Copy button, which also uses
+   .upload-button) — flat latte fill instead of white, and no hover
+   color change at all. Comes after .upload-button above so it wins on
+   the shared properties, including on hover. */
+#title-writer .upload-button.latte-button,
+#title-writer .upload-button.latte-button:not(:disabled):hover {
+  background: var(--latte);
+  border-color: var(--latte-border);
+  opacity: 1;
 }
 
 .thumbs {

@@ -246,7 +246,7 @@ function EtsyTool() {
         />
         <button
           type="button"
-          className="upload-button"
+          className="upload-button latte-button"
           onClick={() => fileInputRef.current?.click()}
           disabled={images.length >= MAX_IMAGES}
         >
