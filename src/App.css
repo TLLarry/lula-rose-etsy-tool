@@ -674,12 +674,12 @@ mark {
 }
 
 /* Overrides the shared 160px header buffer above for Calendar only —
-   shrinks the gap between the subtitle and the calendar grid to about
-   1.5in total (this rule's 128px + the container's own 16px gap),
-   shifting the title/subtitle/calendar block up. Nothing else on this
-   page's spacing is touched. */
+   shrinks the gap between the subtitle and the content below to about
+   1in total (this rule's 80px + the container's own 16px gap), shifting
+   the whole content block up as one unit. Nothing else on this page's
+   spacing is touched. */
 #calendar-page h1 + .subhead {
-  margin-bottom: 128px;
+  margin-bottom: 80px;
 }
 
 .summary-cards {
