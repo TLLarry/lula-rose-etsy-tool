@@ -702,6 +702,73 @@ mark {
   color: var(--text);
 }
 
+.dashboard-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+
+  @media (max-width: 700px) {
+    flex-direction: column;
+  }
+}
+
+.dashboard-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.dashboard-side {
+  flex: 0 0 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  @media (max-width: 700px) {
+    flex: 1;
+    width: 100%;
+  }
+}
+
+.dashboard-performers-box {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-performers-box h2 {
+  font-size: 16px;
+}
+
+.dashboard-performer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dashboard-performer-button {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--code-bg);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg);
+  }
+}
+
 .theme-options-placeholder {
   border: 1px dashed var(--border);
   border-radius: 12px;
