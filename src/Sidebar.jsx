@@ -2,7 +2,6 @@ const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'listing-tool', label: 'Listing Tool' },
   { id: 'keyword-analysis', label: 'Keyword Analysis' },
-  { id: 'tag-scores', label: 'Tag Scores' },
   { id: 'competitors', label: 'Competitors' },
   { id: 'trends', label: 'Trends' },
   { id: 'calendar', label: 'Calendar' },

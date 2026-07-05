@@ -5,7 +5,6 @@ import Sidebar from './Sidebar'
 import Dashboard from './Dashboard'
 import EtsyTool from './EtsyTool'
 import KeywordAnalysis from './KeywordAnalysis'
-import TagScores from './TagScores'
 import CompetitorBenchmarking from './CompetitorBenchmarking'
 import Trends from './Trends'
 import Calendar from './Calendar'
@@ -40,7 +39,6 @@ function App() {
         {activePage === 'dashboard' && <Dashboard password={password} />}
         {activePage === 'listing-tool' && <EtsyTool />}
         {activePage === 'keyword-analysis' && <KeywordAnalysis password={password} />}
-        {activePage === 'tag-scores' && <TagScores password={password} />}
         {activePage === 'competitors' && <CompetitorBenchmarking password={password} />}
         {activePage === 'trends' && <Trends password={password} />}
         {activePage === 'calendar' && <Calendar password={password} />}
