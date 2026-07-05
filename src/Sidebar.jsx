@@ -1,11 +1,11 @@
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'listing-tool', label: 'Listing Tool' },
+  { id: 'listing-revamp', label: 'Listing Revamp' },
   { id: 'keyword-analysis', label: 'Keyword Analysis' },
   { id: 'competitors', label: 'Competitors' },
   { id: 'trends', label: 'Trends' },
   { id: 'calendar', label: 'Calendar' },
-  { id: 'listing-revamp', label: 'Listing Revamp' },
 ]
 
 function Sidebar({ activePage, onNavigate }) {
