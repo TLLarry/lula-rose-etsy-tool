@@ -32,6 +32,10 @@ function statusClass(status) {
 
 function ListingRevamp({ password }) {
   const [listingUrl, setListingUrl] = useState('')
+  // Placeholder only — not wired to any fetch/logic yet, per Day 43's
+  // scope. Just local state so the input is a normal, typable controlled
+  // field rather than a hardcoded, read-only one.
+  const [competitorListingUrl, setCompetitorListingUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [listing, setListing] = useState(null)
   const [error, setError] = useState('')
@@ -216,18 +220,25 @@ function ListingRevamp({ password }) {
         Paste a link to one of your existing Etsy listings to pull it up and work on it here.
       </p>
 
-      <div className="theme-options-placeholder">
-        <p>Theme options coming soon</p>
-      </div>
-
       <div className="field">
-        <label htmlFor="listing-url">Etsy listing link</label>
+        <label htmlFor="listing-url">Your Etsy Listing Link</label>
         <input
           id="listing-url"
           type="text"
           value={listingUrl}
           onChange={(event) => setListingUrl(event.target.value)}
           placeholder="https://www.etsy.com/listing/1234567890/your-listing-title"
+        />
+      </div>
+
+      <div className="field">
+        <label htmlFor="competitor-listing-url">Competitor's Listing Link</label>
+        <input
+          id="competitor-listing-url"
+          type="text"
+          value={competitorListingUrl}
+          onChange={(event) => setCompetitorListingUrl(event.target.value)}
+          placeholder="https://www.etsy.com/listing/1234567890/their-listing-title"
         />
       </div>
 

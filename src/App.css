@@ -763,14 +763,6 @@ mark {
   cursor: pointer;
 }
 
-.theme-options-placeholder {
-  border: 1px dashed var(--border);
-  border-radius: 12px;
-  padding: 48px 20px;
-  text-align: center;
-  color: var(--text);
-}
-
 .listing-revamp-section {
   display: flex;
   flex-direction: column;
