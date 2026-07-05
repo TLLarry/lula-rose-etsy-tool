@@ -6,7 +6,7 @@ import Dashboard from './Dashboard'
 import EtsyTool from './EtsyTool'
 import KeywordAnalysis from './KeywordAnalysis'
 import CompetitorBenchmarking from './CompetitorBenchmarking'
-import Trends from './Trends'
+import EtsyCoach from './EtsyCoach'
 import Calendar from './Calendar'
 import ListingRevamp from './ListingRevamp'
 
@@ -40,7 +40,7 @@ function App() {
         {activePage === 'listing-tool' && <EtsyTool />}
         {activePage === 'keyword-analysis' && <KeywordAnalysis password={password} />}
         {activePage === 'competitors' && <CompetitorBenchmarking password={password} />}
-        {activePage === 'trends' && <Trends password={password} />}
+        {activePage === 'etsy-coach' && <EtsyCoach />}
         {activePage === 'calendar' && <Calendar password={password} />}
         {activePage === 'listing-revamp' && <ListingRevamp password={password} />}
       </main>

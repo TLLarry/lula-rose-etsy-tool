@@ -600,7 +600,7 @@ mark {
 #title-writer,
 #dashboard-page,
 #keyword-analysis-page,
-#trends-page,
+#etsy-coach-page,
 #calendar-page,
 #listing-revamp-page,
 #competitor-benchmarking-page {
@@ -624,7 +624,7 @@ mark {
 #title-writer h1,
 #dashboard-page h1,
 #keyword-analysis-page h1,
-#trends-page h1,
+#etsy-coach-page h1,
 #calendar-page h1,
 #listing-revamp-page h1,
 #competitor-benchmarking-page h1 {
@@ -640,7 +640,7 @@ mark {
    notes) keeps its normal small margin. */
 #title-writer h1 + .subhead,
 #dashboard-page h1 + .subhead,
-#trends-page h1 + .subhead,
+#etsy-coach-page h1 + .subhead,
 #calendar-page h1 + .subhead,
 #listing-revamp-page h1 + .subhead,
 #competitor-benchmarking-page h1 + .subhead {
@@ -867,28 +867,6 @@ mark {
   font-size: 16px;
 }
 
-.month-select-field select {
-  font: inherit;
-  font-size: 16px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-h);
-  align-self: flex-start;
-
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-    border-color: var(--accent-border);
-  }
-}
-
-.performance-summary {
-  color: var(--text-h);
-  font-weight: 600;
-}
-
 .keyword-table-wrap {
   overflow-x: auto;
 }
@@ -944,54 +922,6 @@ mark {
 .status-tag.status-cut {
   background: rgba(209, 36, 47, 0.12);
   color: #d1242f;
-}
-
-.trend-month-selectors {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-}
-
-.trend-vs {
-  color: var(--text);
-  font-weight: 600;
-  padding-bottom: 9px;
-}
-
-.movement-up {
-  color: #1c7a3d;
-}
-
-.movement-down {
-  color: #d1242f;
-}
-
-.movement-muted {
-  color: var(--text);
-}
-
-.movement-steady {
-  color: var(--text-h);
-}
-
-.status-tag.movement-up {
-  background: rgba(38, 143, 71, 0.12);
-  color: #1c7a3d;
-}
-
-.status-tag.movement-down {
-  background: rgba(209, 36, 47, 0.12);
-  color: #d1242f;
-}
-
-.status-tag.movement-muted {
-  background: var(--code-bg);
-  color: var(--text);
-}
-
-.status-tag.movement-steady {
-  background: var(--code-bg);
-  color: var(--text-h);
 }
 
 .month-calendar {
