@@ -684,11 +684,25 @@ mark {
 
 /* Overrides the shared 160px header buffer above for Listing Revamp
    only — shrinks the gap between the subtitle and the content below to
-   about 1.5in total (this rule's 128px + the container's own 16px gap),
+   about 1in total (this rule's 80px + the container's own 16px gap),
    shifting the whole content block up as one unit. Nothing else on this
    page's spacing is touched. */
 #listing-revamp-page h1 + .subhead {
-  margin-bottom: 128px;
+  margin-bottom: 80px;
+}
+
+/* Load Listing, Revamp My Listing, Combine Both, Read CSV, Rewrite
+   Listing, and this page's own Upload Photos button — same compact
+   size/shape as the Listing Tool's Upload Photos button (.upload-button:
+   align-self flex-start, same padding/font-weight), but flat latte fill
+   instead, and no hover color change at all. */
+.revamp-button {
+  align-self: flex-start;
+  padding: 8px 16px;
+  color: var(--text-h);
+  background: var(--latte);
+  border: 1px solid var(--latte-border);
+  font-weight: 600;
 }
 
 .summary-cards {

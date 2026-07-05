@@ -242,11 +242,20 @@ function ListingRevamp({ password }) {
         />
       </div>
 
-      <button type="button" onClick={handleLoadListing} disabled={!listingUrl.trim() || loading}>
+      <button
+        type="button"
+        className="revamp-button"
+        onClick={handleLoadListing}
+        disabled={!listingUrl.trim() || loading}
+      >
         {loading ? 'Loading…' : 'Load Listing'}
       </button>
-      <button type="button">Revamp My Listing</button>
-      <button type="button">Combine Both</button>
+      <button type="button" className="revamp-button">
+        Revamp My Listing
+      </button>
+      <button type="button" className="revamp-button">
+        Combine Both
+      </button>
 
       {error && <p className="error">{error}</p>}
 
@@ -324,7 +333,12 @@ function ListingRevamp({ password }) {
           </div>
         </div>
 
-        <button type="button" onClick={handleParseCsv} disabled={!csvFile || parsingCsv}>
+        <button
+          type="button"
+          className="revamp-button"
+          onClick={handleParseCsv}
+          disabled={!csvFile || parsingCsv}
+        >
           {parsingCsv ? 'Reading…' : 'Read CSV'}
         </button>
 
@@ -431,6 +445,7 @@ function ListingRevamp({ password }) {
 
         <button
           type="button"
+          className="revamp-button"
           onClick={handleRewriteListing}
           disabled={!csvResult || !rewriteDescription.trim() || rewriting}
         >
@@ -533,7 +548,7 @@ function ListingRevamp({ password }) {
           />
           <button
             type="button"
-            className="upload-button"
+            className="revamp-button"
             onClick={() => photoFileInputRef.current?.click()}
             disabled={photos.length >= MAX_IMAGES}
           >
