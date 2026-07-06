@@ -9,6 +9,7 @@ import CompetitorBenchmarking from './CompetitorBenchmarking'
 import EtsyCoach from './EtsyCoach'
 import Calendar from './Calendar'
 import ListingRevamp from './ListingRevamp'
+import LowPerformers from './LowPerformers'
 
 function App() {
   // In-memory only — resets on tab close/refresh, never persisted to
@@ -20,6 +21,15 @@ function App() {
   // Client-side only — which page is showing. Not persisted anywhere, so a
   // refresh always lands back on the Dashboard after re-login.
   const [activePage, setActivePage] = useState('dashboard')
+  // Set by Low Performers' "Revamp" button, consumed once by
+  // ListingRevamp's own effect, then cleared here — the standard lifted-
+  // state ownership pattern this app already uses for `password`.
+  const [pendingRevampListingUrl, setPendingRevampListingUrl] = useState('')
+
+  const handleRevampHandoff = (etsyListingId) => {
+    setPendingRevampListingUrl(`https://www.etsy.com/listing/${etsyListingId}`)
+    setActivePage('listing-revamp')
+  }
 
   if (!authenticated) {
     return (
@@ -42,7 +52,16 @@ function App() {
         {activePage === 'competitors' && <CompetitorBenchmarking password={password} />}
         {activePage === 'etsy-coach' && <EtsyCoach password={password} />}
         {activePage === 'calendar' && <Calendar password={password} />}
-        {activePage === 'listing-revamp' && <ListingRevamp password={password} />}
+        {activePage === 'listing-revamp' && (
+          <ListingRevamp
+            password={password}
+            pendingListingUrl={pendingRevampListingUrl}
+            onPendingListingConsumed={() => setPendingRevampListingUrl('')}
+          />
+        )}
+        {activePage === 'low-performers' && (
+          <LowPerformers password={password} onRevamp={handleRevampHandoff} />
+        )}
       </main>
     </div>
   )

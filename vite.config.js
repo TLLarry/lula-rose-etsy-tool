@@ -27,6 +27,7 @@ import {
   createTopSellersHandler,
 } from './server/etsyCoach.js'
 import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
+import { createLowPerformersHandler } from './server/lowPerformers.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -76,6 +77,7 @@ function etsyTitleWriterPlugin(env) {
         '/api/nightly-sync-log',
         createNightlySyncLogHandler(env, passwordsMatch)
       )
+      server.middlewares.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))
     },
   }
 }

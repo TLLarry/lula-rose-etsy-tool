@@ -611,6 +611,7 @@ mark {
 #etsy-coach-page,
 #calendar-page,
 #listing-revamp-page,
+#low-performers-page,
 #competitor-benchmarking-page {
   display: flex;
   flex-direction: column;
@@ -635,6 +636,7 @@ mark {
 #etsy-coach-page h1,
 #calendar-page h1,
 #listing-revamp-page h1,
+#low-performers-page h1,
 #competitor-benchmarking-page h1 {
   text-align: center;
   font-size: 32px;
@@ -651,6 +653,7 @@ mark {
 #etsy-coach-page h1 + .subhead,
 #calendar-page h1 + .subhead,
 #listing-revamp-page h1 + .subhead,
+#low-performers-page h1 + .subhead,
 #competitor-benchmarking-page h1 + .subhead {
   text-align: center;
   margin-bottom: 160px;
@@ -883,6 +886,102 @@ mark {
     opacity: 0.5;
     cursor: not-allowed;
   }
+}
+
+/* Low Performers — one single row per listing: rank, thumbnail, linked
+   title, stat, Revamp button, left to right. */
+.low-performer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.low-performer-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.low-performer-rank {
+  flex-shrink: 0;
+  width: 24px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* Fixed-size slot even when a listing has no thumbnail yet, so every
+   row's title/stat/button stay aligned in the same columns. */
+.low-performer-thumb-slot {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+}
+
+.low-performer-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.low-performer-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.low-performer-stat {
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pagination-button,
+.pagination-page-button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.pagination-page-button {
+  min-width: 32px;
+  text-align: center;
+  padding: 6px 10px;
+}
+
+.pagination-page-button.active {
+  background: var(--latte);
+  border-color: var(--latte-border);
+  font-weight: 600;
 }
 
 .listing-revamp-section {

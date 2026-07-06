@@ -3,6 +3,7 @@ const NAV_ITEMS = [
   { id: 'etsy-coach', label: 'Etsy Coach' },
   { id: 'listing-tool', label: 'Listing Tool' },
   { id: 'listing-revamp', label: 'Listing Revamp' },
+  { id: 'low-performers', label: 'Low Performers' },
   { id: 'keyword-analysis', label: 'Keyword Analysis' },
   { id: 'competitors', label: 'Competitors' },
   { id: 'calendar', label: 'Calendar' },

@@ -27,6 +27,7 @@ import {
   classifyAgainstPeers,
 } from './quarterRollup.js'
 import { getTagScores } from './analysis.js'
+import { getMatchingQuartersForListing } from './seasonalKeywords.js'
 
 function formatList(items) {
   if (items.length === 0) return ''
@@ -79,9 +80,19 @@ function computeTrendPushRecommendations(reviewDate) {
   const currentRows = getListingStatsForQuarter(year, quarter)
   const previousRows = getListingStatsForQuarter(previous.year, previous.quarter)
 
+  // "Non-seasonal" is now detected automatically via keyword matching
+  // (server/seasonalKeywords.js) rather than shop_listings.is_seasonal,
+  // which nothing has ever actually set (no UI or API ever wrote to it
+  // — it's been sitting at its default false for every listing since
+  // that column was created, silently treating everything as
+  // non-seasonal). The keyword detector fixes that: a listing is
+  // "non-seasonal" here only if it matches no seasonal keyword at all.
   const nonSeasonalIds = new Set(
     getShopListings()
-      .filter((listing) => !listing.is_seasonal)
+      .filter((listing) => {
+        const tags = listing.tags_json ? JSON.parse(listing.tags_json) : []
+        return getMatchingQuartersForListing(listing.title, tags).length === 0
+      })
       .map((listing) => listing.id)
   )
 

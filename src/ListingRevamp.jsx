@@ -30,7 +30,7 @@ function statusClass(status) {
   return 'status-average'
 }
 
-function ListingRevamp({ password }) {
+function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }) {
   const [listingUrl, setListingUrl] = useState('')
   // Placeholder only — not wired to any fetch/logic yet, per Day 43's
   // scope. Just local state so the input is a normal, typable controlled
@@ -55,7 +55,12 @@ function ListingRevamp({ password }) {
   const [photoError, setPhotoError] = useState('')
   const photoFileInputRef = useRef(null)
 
-  const handleLoadListing = async () => {
+  // Accepts an optional explicit URL — needed for the Low Performers
+  // "Revamp" button handoff (see the pendingListingUrl effect below),
+  // since calling setListingUrl and then immediately calling this in the
+  // same tick would otherwise read the STALE listingUrl value (React
+  // state updates don't flush synchronously), not the one just set.
+  const handleLoadListing = async (urlOverride) => {
     setLoading(true)
     setError('')
     setListing(null)
@@ -63,7 +68,7 @@ function ListingRevamp({ password }) {
       const response = await fetch('/api/load-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-        body: JSON.stringify({ url: listingUrl }),
+        body: JSON.stringify({ url: urlOverride ?? listingUrl }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to load that listing.')
@@ -78,6 +83,22 @@ function ListingRevamp({ password }) {
       setLoading(false)
     }
   }
+
+  // Low Performers' "Revamp" button lands here with a specific listing
+  // already chosen — seeds the link field and loads it immediately,
+  // equivalent to the seller having pasted the URL and clicked Load
+  // Listing themselves. The parent (App.jsx) clears pendingListingUrl
+  // once consumed, so navigating away and back doesn't re-trigger this.
+  useEffect(() => {
+    if (!pendingListingUrl) return
+    setListingUrl(pendingListingUrl)
+    handleLoadListing(pendingListingUrl)
+    onPendingListingConsumed()
+    // Only pendingListingUrl should re-fire this — handleLoadListing
+    // itself changes on every render (it closes over listingUrl) and
+    // isn't a meaningful dependency here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingListingUrl])
 
   const handleCsvFileSelected = (event) => {
     const selected = event.target.files?.[0] || null
@@ -245,7 +266,7 @@ function ListingRevamp({ password }) {
       <button
         type="button"
         className="revamp-button"
-        onClick={handleLoadListing}
+        onClick={() => handleLoadListing()}
         disabled={!listingUrl.trim() || loading}
       >
         {loading ? 'Loading…' : 'Load Listing'}
