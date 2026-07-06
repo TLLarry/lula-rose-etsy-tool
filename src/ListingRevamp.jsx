@@ -326,11 +326,18 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
 
       <div className="listing-revamp-section">
         <h2>Stats for This Listing</h2>
+        {listing && (
+          <p className="subhead">
+            {listing.views !== null ? `${listing.views} view${listing.views === 1 ? '' : 's'} all-time` : 'View count unavailable'}{' '}
+            — live from your connected Etsy account.
+          </p>
+        )}
         <p className="subhead">
-          Upload this listing's Etsy Stats, eRank, or EverBee export (.csv) to see its stats
-          here. This works independently of the link above for now — since the Etsy API key is
-          still pending approval, there's no live listing to connect it to yet, but the format
-          detection is exactly what Keyword Analysis uses shop-wide.
+          Upload this listing's Etsy Stats, eRank, or EverBee export (.csv) to see which search
+          terms brought it visits — Etsy's API doesn't expose that per-keyword breakdown, so a
+          CSV export is still the only way to see it. Works independently of the link above (you
+          don't need to load the listing first). The format detection is exactly what Keyword
+          Analysis uses shop-wide.
         </p>
 
         <div className="field">
