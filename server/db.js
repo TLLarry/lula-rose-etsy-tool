@@ -297,6 +297,17 @@ ensureColumn('competitors', 'tags_json', 'TEXT')
 ensureColumn('competitors', 'thumbnail_url', 'TEXT')
 ensureColumn('competitors', 'last_synced_at', 'TEXT')
 
+// The last cumulative views/num_favorers Etsy reported for this listing,
+// as of the most recent sync — the baseline server/etsyShopStats.js
+// diffs the NEXT sync's cumulative total against to compute that day's
+// delta. Nullable: null means "never synced yet" (a brand-new listing,
+// or any listing synced for the first time before Etsy OAuth was
+// connected at all) — the sync treats a null baseline as "record a 0
+// delta and set this as the new baseline," never estimating a delta
+// against data that doesn't exist.
+ensureColumn('shop_listings', 'last_known_views', 'INTEGER')
+ensureColumn('shop_listings', 'last_known_favorites', 'INTEGER')
+
 function saveListing({ etsyListingId = null, title, category = null }) {
   const result = db
     .prepare(`INSERT INTO listings (etsy_listing_id, title, category) VALUES (?, ?, ?)`)
@@ -526,6 +537,27 @@ function getListingsCreatedSince(isoDate) {
     .all(isoDate)
 }
 
+// Null lastKnownViews/lastKnownFavorites means "never synced" — the
+// caller should record a 0 delta rather than diffing against nothing.
+function getShopListingLastKnownCounts(etsyListingId) {
+  const row = db
+    .prepare(`SELECT last_known_views, last_known_favorites FROM shop_listings WHERE etsy_listing_id = ?`)
+    .get(etsyListingId)
+  if (!row) return null
+  return { lastKnownViews: row.last_known_views, lastKnownFavorites: row.last_known_favorites }
+}
+
+// Records the CURRENT cumulative totals as the new baseline for next
+// time's delta — called once per listing per sync, after that sync's
+// delta has already been computed and stored.
+function updateListingLastKnownCounts(listingId, views, favorites) {
+  db.prepare(`UPDATE shop_listings SET last_known_views = ?, last_known_favorites = ? WHERE id = ?`).run(
+    views ?? null,
+    favorites ?? null,
+    listingId
+  )
+}
+
 // --- daily_listing_stats ---
 
 function upsertDailyListingStats({
@@ -557,50 +589,66 @@ function upsertDailyListingStats({
   )
 }
 
+// Today's row specifically needs different conflict semantics per
+// column: views/favorites are DELTAS, so if the nightly sync is ever
+// manually re-run twice in the same day, a second run's delta must ADD
+// to the first rather than overwrite it (the first run's gain shouldn't
+// vanish). units_sold/revenue_cents, by contrast, are always recomputed
+// as that day's FULL total from ALL of today's receipts, so overwriting
+// is correct and idempotent no matter how many times a day this runs.
+function recordTodayListingStats({
+  listingId,
+  date,
+  viewsDelta,
+  favoritesDelta,
+  unitsSold,
+  revenueCents,
+  source,
+}) {
+  db.prepare(
+    `INSERT INTO daily_listing_stats (listing_id, date, views, favorites, units_sold, revenue_cents, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(listing_id, date) DO UPDATE SET
+       views = COALESCE(daily_listing_stats.views, 0) + excluded.views,
+       favorites = COALESCE(daily_listing_stats.favorites, 0) + excluded.favorites,
+       units_sold = excluded.units_sold,
+       revenue_cents = excluded.revenue_cents,
+       source = excluded.source`
+  ).run(listingId, date, viewsDelta ?? 0, favoritesDelta ?? 0, unitsSold ?? null, revenueCents ?? null, source ?? null)
+}
+
 // Raw per-listing aggregates over an arbitrary [startDate, endDate]
 // (inclusive, 'YYYY-MM-DD' strings) — the one shared aggregate query
 // every rollup (weekly/monthly/quarterly) is built on top of, matching
 // the same on-read-aggregation convention getKeywordAggregatesForMonths
 // already uses instead of pre-materialized rollup tables.
 //
-// IMPORTANT: views/favorites are Etsy's own LIFETIME CUMULATIVE counters
-// captured once per day (confirmed via a live API call — Etsy doesn't
-// expose a per-day views/favorites feed), so naively SUM()-ing them
-// across a date range would wildly overcount. viewsGained/
-// favoritesGained below are computed correctly as (latest snapshot in
-// range) - (earliest snapshot in range) instead. units_sold/
-// revenue_cents, by contrast, come from actual receipt transactions on
-// each specific day, so SUM() is the correct, honest total for those.
+// All four columns are true daily deltas (the amount that happened on
+// that specific day), so a plain SUM() is correct for all of them.
+// views/favorites are NOT stored as Etsy's raw lifetime cumulative
+// counters — Etsy only exposes those as a live, un-dated total (no
+// per-day history, confirmed via a live API call), so there's nothing
+// honest to backfill before OAuth was connected. Instead,
+// server/etsyShopStats.js computes each night's CHANGE since the last
+// known cumulative total (tracked on shop_listings.last_known_views/
+// last_known_favorites) and stores that change here — the first sync
+// for any listing always records a 0 delta (establishing the baseline,
+// never estimating pre-baseline history), so "gained in the last 30
+// days"/quarter comparisons become accurate from the day OAuth was
+// connected onward.
 function getListingStatsForDateRange(startDate, endDate) {
   return db
     .prepare(
       `SELECT sl.id AS listingId, sl.title, sl.thumbnail_url AS thumbnailUrl,
               sl.is_seasonal AS isSeasonal, sl.etsy_created_at AS etsyCreatedAt,
               SUM(dls.units_sold) AS unitsSold, SUM(dls.revenue_cents) AS revenueCents,
-              (
-                SELECT views FROM daily_listing_stats
-                WHERE listing_id = sl.id AND date BETWEEN ? AND ? AND views IS NOT NULL
-                ORDER BY date DESC LIMIT 1
-              ) - (
-                SELECT views FROM daily_listing_stats
-                WHERE listing_id = sl.id AND date BETWEEN ? AND ? AND views IS NOT NULL
-                ORDER BY date ASC LIMIT 1
-              ) AS viewsGained,
-              (
-                SELECT favorites FROM daily_listing_stats
-                WHERE listing_id = sl.id AND date BETWEEN ? AND ? AND favorites IS NOT NULL
-                ORDER BY date DESC LIMIT 1
-              ) - (
-                SELECT favorites FROM daily_listing_stats
-                WHERE listing_id = sl.id AND date BETWEEN ? AND ? AND favorites IS NOT NULL
-                ORDER BY date ASC LIMIT 1
-              ) AS favoritesGained
+              SUM(dls.views) AS viewsGained, SUM(dls.favorites) AS favoritesGained
        FROM shop_listings sl
        JOIN daily_listing_stats dls ON dls.listing_id = sl.id
        WHERE dls.date BETWEEN ? AND ?
        GROUP BY sl.id`
     )
-    .all(startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate)
+    .all(startDate, endDate)
 }
 
 // Rolling 30-day window ending today — used by both Top Sellers and the
@@ -1053,7 +1101,10 @@ export {
   setListingSeasonal,
   getShopListings,
   getListingsCreatedSince,
+  getShopListingLastKnownCounts,
+  updateListingLastKnownCounts,
   upsertDailyListingStats,
+  recordTodayListingStats,
   getListingStatsForDateRange,
   getListingStatsRolling30Days,
   getEtsyOAuthTokens,

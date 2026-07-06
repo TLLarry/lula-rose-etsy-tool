@@ -7,18 +7,33 @@
 // fetchEtsyListing — no OAuth needed for that part at all.
 //
 // views/num_favorers are Etsy's own lifetime cumulative counters (not a
-// per-day feed — confirmed via a live call), so this just stores today's
-// raw snapshot into daily_listing_stats.views/favorites each night;
-// db.js's getListingStatsForDateRange computes the correct gained-in-
-// period delta on read, rather than this module trying to diff
-// yesterday-vs-today itself (which would break silently on any missed
-// night — a stored-snapshot-then-diff-on-read design tolerates gaps).
+// per-day feed, and NOT retroactively queryable — confirmed via a live
+// call and a documentation review before Etsy OAuth was even connected).
+// There's nothing honest to backfill for whatever time passed before
+// OAuth went live, so this module doesn't try: each night, it diffs the
+// freshly-fetched cumulative total against the LAST KNOWN cumulative
+// total (tracked on shop_listings.last_known_views/last_known_favorites)
+// and stores that CHANGE — not the raw cumulative number — into
+// daily_listing_stats.views/favorites. The very first sync for any
+// listing (a brand-new listing, or any listing's first sync ever, right
+// when OAuth is first connected) has no prior baseline, so it records a
+// 0 delta and simply establishes the baseline for every sync after that
+// — "gained in the last 30 days"/quarter comparisons become accurate
+// from that day forward, with no estimated or backfilled pre-OAuth data.
 //
 // units_sold/revenue_cents come from actual receipt transactions,
-// aggregated per listing per day — real, non-cumulative daily totals.
+// aggregated per listing per day — real, non-cumulative daily totals,
+// and (unlike views/favorites) genuinely backfillable from Etsy's order
+// history via fetchShopReceiptsSince's min_created param.
 import { getValidAccessToken } from './etsyOAuth.js'
 import { fetchEtsyListing } from './etsyListing.js'
-import { upsertShopListing, upsertDailyListingStats } from './db.js'
+import {
+  upsertShopListing,
+  getShopListingLastKnownCounts,
+  updateListingLastKnownCounts,
+  upsertDailyListingStats,
+  recordTodayListingStats,
+} from './db.js'
 
 const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 const PAGE_LIMIT = 100
@@ -173,25 +188,37 @@ async function syncShopListingsAndStats(env) {
 
     const salesForListing = salesByListingAndDay.get(listingIdStr)
 
-    // Always write today's cumulative views/favorites snapshot, even if
-    // a listing had no sales today — that's what makes the
-    // gained-in-period delta (see getListingStatsForDateRange) tolerant
-    // of days with zero activity.
-    upsertDailyListingStats({
+    // A null baseline (never synced before) records a 0 delta rather
+    // than diffing against nothing — see the header comment above.
+    const previousCounts = getShopListingLastKnownCounts(listingIdStr)
+    const viewsDelta =
+      previousCounts?.lastKnownViews != null ? listing.views - previousCounts.lastKnownViews : 0
+    const favoritesDelta =
+      previousCounts?.lastKnownFavorites != null
+        ? listing.numFavorers - previousCounts.lastKnownFavorites
+        : 0
+
+    recordTodayListingStats({
       listingId: shopListingRowId,
       date: today,
-      views: listing.views,
-      favorites: listing.numFavorers,
+      viewsDelta,
+      favoritesDelta,
       unitsSold: salesForListing?.[today]?.unitsSold ?? 0,
       revenueCents: salesForListing?.[today]?.revenueCents ?? 0,
       source: 'etsy_api',
     })
     statsRowsWritten += 1
 
+    // Always moves forward to today's real cumulative total, regardless
+    // of whether a baseline existed before this run.
+    updateListingLastKnownCounts(shopListingRowId, listing.views, listing.numFavorers)
+
     // Backfill any earlier days from this receipt pull that don't yet
-    // have a units_sold/revenue figure recorded (views/favorites for
-    // past days are lost once missed, since Etsy only exposes the
-    // CURRENT cumulative count — only today's snapshot is ever real).
+    // have a units_sold/revenue figure recorded. views/favorites stay
+    // null (unknown, not zero — SUM() correctly ignores nulls) for these
+    // backfilled days, since a daily delta can only ever be computed
+    // going forward from a real baseline, never reconstructed after the
+    // fact for a day that's already passed.
     if (salesForListing) {
       for (const [date, sales] of Object.entries(salesForListing)) {
         if (date === today) continue
