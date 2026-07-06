@@ -61,6 +61,7 @@ const env = {
   CRON_SECRET: process.env.CRON_SECRET,
   ETSY_API_KEY: process.env.ETSY_API_KEY,
   ETSY_SHARED_SECRET: process.env.ETSY_SHARED_SECRET,
+  ETSY_SHOP_ID: process.env.ETSY_SHOP_ID,
 }
 
 const app = express()

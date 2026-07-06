@@ -12,8 +12,13 @@
 //                        listing access).
 //   ETSY_SHARED_SECRET - the same app's shared secret, shown alongside
 //                        the keystring when the app is created.
-// If either is missing, the app still boots fine and /api/load-listing
-// just reports "Etsy isn't configured yet" instead of crashing.
+//   ETSY_SHOP_ID       - your own shop's numeric ID, used only to confirm
+//                        a pasted "Your Etsy Listing Link" actually
+//                        belongs to your shop (see checkListingBelongsToShop
+//                        below) — not sent to Etsy as a request parameter,
+//                        since getListing looks a listing up by its own ID.
+// If any is missing, the app still boots fine and /api/load-listing just
+// reports "Etsy isn't configured yet" instead of crashing.
 import { checkAppPassword } from './db.js'
 import { readJsonBody, RequestError } from './listingApi.js'
 
@@ -23,6 +28,7 @@ function getMissingEtsyEnvVars(env) {
   const missing = []
   if (!env.ETSY_API_KEY) missing.push('ETSY_API_KEY')
   if (!env.ETSY_SHARED_SECRET) missing.push('ETSY_SHARED_SECRET')
+  if (!env.ETSY_SHOP_ID) missing.push('ETSY_SHOP_ID')
   return missing
 }
 
@@ -55,6 +61,20 @@ function normalizeImages(rawImages) {
     .filter((image) => image.url)
 }
 
+// A pasted link in "Your Etsy Listing Link" is supposed to be one of the
+// seller's own listings (as opposed to the separate "Competitor's Listing
+// Link" field) — this catches the easy mistake of pasting the wrong kind
+// of link into the wrong box, using the shop ID env var as the source of
+// truth for "which shop is actually yours."
+function checkListingBelongsToShop(env, data) {
+  if (String(data.shop_id) !== String(env.ETSY_SHOP_ID)) {
+    throw new RequestError(
+      403,
+      "That listing doesn't belong to your connected shop — double check the link, or paste it into the Competitor's Listing Link field instead."
+    )
+  }
+}
+
 async function fetchEtsyListing(env, listingId) {
   const response = await fetch(`${ETSY_API_BASE}/listings/${listingId}?includes=Images`, {
     headers: {
@@ -77,6 +97,7 @@ async function fetchEtsyListing(env, listingId) {
   }
 
   const data = await response.json()
+  checkListingBelongsToShop(env, data)
 
   return {
     listingId: data.listing_id,
@@ -131,6 +152,7 @@ function createLoadListingHandler(env, passwordsMatch) {
 export {
   parseListingIdFromUrl,
   fetchEtsyListing,
+  checkListingBelongsToShop,
   isEtsyConfigured,
   getMissingEtsyEnvVars,
   createLoadListingHandler,
