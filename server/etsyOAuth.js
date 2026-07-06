@@ -150,7 +150,7 @@ function createEtsyOAuthCallbackHandler(env) {
           client_id: env.ETSY_API_KEY,
           redirect_uri: env.ETSY_OAUTH_REDIRECT_URI,
           code,
-          code_verifier: pending.codeVerifier,
+          code_verifier: pending.code_verifier,
         }),
       })
 
