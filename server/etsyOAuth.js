@@ -62,7 +62,16 @@ function createEtsyOAuthStartHandler(env, passwordsMatch) {
       return
     }
 
-    const providedPassword = req.headers['x-app-password']
+    // This URL is meant to be visited directly in a browser (it redirects
+    // to Etsy's consent screen) — a plain top-level navigation can't
+    // attach a custom header the way a fetch() call can, so the header
+    // check alone could never succeed here. Accepts the SAME app
+    // password via a ?password= query param as a fallback, matching the
+    // existing x-cron-secret/?secret= dual-auth pattern already used by
+    // /api/run-reminder-check and /api/run-nightly-sync for the same
+    // reason (a non-fetch caller needing another way to authenticate).
+    const queryString = req.url.includes('?') ? req.url.split('?')[1] : ''
+    const providedPassword = req.headers['x-app-password'] || new URLSearchParams(queryString).get('password')
     if (
       typeof providedPassword !== 'string' ||
       !env.APP_PASSWORD ||
