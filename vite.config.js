@@ -9,6 +9,7 @@ import {
   createDbStatusHandler,
   createDashboardSummaryHandler,
   createPerformanceHandler,
+  createAppSettingsHandler,
 } from './server/db.js'
 import { createUploadCsvHandler } from './server/csvUpload.js'
 import { createTagScoresHandler, createTrendsHandler } from './server/analysis.js'
@@ -19,6 +20,13 @@ import { createLoadListingHandler } from './server/etsyListing.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
 import { createRewriteListingHandler } from './server/listingRevampRewrite.js'
 import { createCompetitorsHandler } from './server/competitors.js'
+import { createEtsyOAuthStartHandler, createEtsyOAuthCallbackHandler } from './server/etsyOAuth.js'
+import {
+  createEtsyCoachFlagsHandler,
+  createQuarterComparisonHandler,
+  createTopSellersHandler,
+} from './server/etsyCoach.js'
+import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -51,6 +59,23 @@ function etsyTitleWriterPlugin(env) {
         createRewriteListingHandler(env, passwordsMatch)
       )
       server.middlewares.use('/api/competitors', createCompetitorsHandler(env, passwordsMatch))
+      server.middlewares.use('/api/etsy-oauth/start', createEtsyOAuthStartHandler(env, passwordsMatch))
+      server.middlewares.use('/api/etsy-oauth/callback', createEtsyOAuthCallbackHandler(env))
+      server.middlewares.use(
+        '/api/etsy-coach/flags',
+        createEtsyCoachFlagsHandler(env, passwordsMatch)
+      )
+      server.middlewares.use(
+        '/api/etsy-coach/quarter-comparison',
+        createQuarterComparisonHandler(env, passwordsMatch)
+      )
+      server.middlewares.use('/api/top-sellers', createTopSellersHandler(env, passwordsMatch))
+      server.middlewares.use('/api/app-settings', createAppSettingsHandler(env, passwordsMatch))
+      server.middlewares.use('/api/run-nightly-sync', createRunNightlySyncHandler(env))
+      server.middlewares.use(
+        '/api/nightly-sync-log',
+        createNightlySyncLogHandler(env, passwordsMatch)
+      )
     },
   }
 }

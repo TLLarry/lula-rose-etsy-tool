@@ -794,12 +794,128 @@ mark {
   cursor: pointer;
 }
 
+/* Top 3 Performing Listings — compact thumbnails (image + name + units
+   sold), deliberately NOT full listing cards like the .result sections
+   elsewhere in the app. */
+.top-seller-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.top-seller-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.top-seller-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.top-seller-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.top-seller-title {
+  font-size: 13px;
+  color: var(--text-h);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-seller-threshold {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.top-seller-threshold label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.top-seller-threshold-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-seller-threshold-row input {
+  width: 70px;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+.top-seller-threshold-save {
+  align-self: auto;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  color: var(--text-h);
+  background: var(--bg);
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
 .listing-revamp-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
   border-top: 1px solid var(--border);
   padding-top: 24px;
+}
+
+.etsy-coach-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+}
+
+.etsy-coach-flag-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.etsy-coach-flag-list li {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-h);
+  font-size: 14px;
 }
 
 .winning-keyword-list {

@@ -1,11 +1,23 @@
-// Competitor Benchmarking (Day 22) — just tracking the seller's list of
-// competitor shop/listing links today. Days 23-24 add pulling each
-// competitor's actual listing details (title, tags, photos) and shop
-// data (open year, total sales) via the Etsy Open API — see the plan
-// note in the PR/commit for that. This module only stores and serves
-// the tracked list; it never fetches anything from Etsy.
-import { listCompetitors, addCompetitor, removeCompetitor, checkAppPassword } from './db.js'
+// Competitor Benchmarking — tracks the seller's list of competitor shop/
+// listing links, and (for listing-type links) refreshes cached title/
+// tags/thumbnail nightly via Etsy's public, API-key-only getListing call
+// (server/etsyListing.js's fetchEtsyListing) — no OAuth needed, no Claude
+// API calls, matching the "automatic processes stay rule-based" rule.
+// Shop-type links aren't auto-refreshable in v1: resolving a shop URL to
+// its listings needs the same listings_r-scoped call used for the
+// user's OWN shop (server/etsyShopStats.js), and there's no existing
+// concept of "whose shop is this" for an arbitrary competitor shop link
+// the way there is for the user's own ETSY_SHOP_ID — building that
+// resolution path is a separate, larger scope item.
+import {
+  listCompetitors,
+  addCompetitor,
+  removeCompetitor,
+  updateCompetitorSnapshot,
+  checkAppPassword,
+} from './db.js'
 import { readJsonBody, RequestError } from './listingApi.js'
+import { parseListingIdFromUrl, fetchEtsyListing } from './etsyListing.js'
 
 // Accepts either a shop link (etsy.com/shop/ShopName) or a listing link
 // (etsy.com/listing/12345/slug), with or without a locale prefix
@@ -67,4 +79,47 @@ function createCompetitorsHandler(env, passwordsMatch) {
   }
 }
 
-export { isEtsyCompetitorUrl, createCompetitorsHandler }
+function isListingTypeUrl(url) {
+  return /etsy\.com\/(?:[a-z]{2,3}\/)?listing\//i.test(url)
+}
+
+// Refreshes cached title/tags/thumbnail for every tracked listing-type
+// competitor URL. Called by the nightly sync orchestrator — never by any
+// manual/user-triggered path, though nothing here would object to being
+// called manually too. Continues past a single competitor's fetch
+// failure (a dead/removed listing shouldn't block refreshing the rest).
+async function refreshCompetitorData(env) {
+  const competitors = listCompetitors()
+  let refreshed = 0
+  let skipped = 0
+  let failed = 0
+
+  for (const competitor of competitors) {
+    if (!isListingTypeUrl(competitor.url)) {
+      skipped += 1
+      continue
+    }
+
+    const listingId = parseListingIdFromUrl(competitor.url)
+    if (!listingId) {
+      skipped += 1
+      continue
+    }
+
+    try {
+      const listing = await fetchEtsyListing(env, listingId)
+      updateCompetitorSnapshot(competitor.id, {
+        title: listing.title,
+        tagsJson: JSON.stringify(listing.tags),
+        thumbnailUrl: listing.images[0]?.url || null,
+      })
+      refreshed += 1
+    } catch {
+      failed += 1
+    }
+  }
+
+  return { total: competitors.length, refreshed, skipped, failed }
+}
+
+export { isEtsyCompetitorUrl, createCompetitorsHandler, refreshCompetitorData }

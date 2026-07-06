@@ -40,7 +40,7 @@ function App() {
         {activePage === 'listing-tool' && <EtsyTool />}
         {activePage === 'keyword-analysis' && <KeywordAnalysis password={password} />}
         {activePage === 'competitors' && <CompetitorBenchmarking password={password} />}
-        {activePage === 'etsy-coach' && <EtsyCoach />}
+        {activePage === 'etsy-coach' && <EtsyCoach password={password} />}
         {activePage === 'calendar' && <Calendar password={password} />}
         {activePage === 'listing-revamp' && <ListingRevamp password={password} />}
       </main>

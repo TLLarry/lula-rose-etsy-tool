@@ -39,6 +39,14 @@ const TABLE_NAMES = [
   'reminder_runs',
   'reminder_log',
   'competitors',
+  'shop_listings',
+  'daily_listing_stats',
+  'etsy_oauth_tokens',
+  'etsy_oauth_pkce',
+  'tag_score_snapshots',
+  'etsy_coach_flags',
+  'nightly_sync_log',
+  'app_settings',
 ]
 
 // Safe to call on every boot — CREATE TABLE/INDEX IF NOT EXISTS is a no-op
@@ -125,7 +133,169 @@ db.exec(`
     url TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- The shop's own tracked listings (nightly-synced via Etsy OAuth, see
+  -- server/etsyShopStats.js) — separate from the long-dead "listings"
+  -- table above (exported helpers, never called anywhere; left alone
+  -- rather than risk redefining it). is_seasonal is an explicit,
+  -- owner-settable flag defaulting to 0 (non-seasonal) — there's no
+  -- reliable way to auto-derive seasonality from category, since every
+  -- category in src/categories.js spans both dated holidays and
+  -- evergreen entries in src/seasonalCalendar.js.
+  CREATE TABLE IF NOT EXISTS shop_listings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    etsy_listing_id TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    thumbnail_url TEXT,
+    tags_json TEXT,
+    category_id TEXT,
+    is_seasonal INTEGER NOT NULL DEFAULT 0,
+    etsy_created_at TEXT,
+    first_tracked_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_synced_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_shop_listings_category ON shop_listings(category_id);
+  CREATE INDEX IF NOT EXISTS idx_shop_listings_seasonal ON shop_listings(is_seasonal);
+
+  -- One row per (listing, day) — daily granularity, rolled up into
+  -- weekly/monthly/quarterly views on read (see server/quarterRollup.js
+  -- and getListingStatsForDateRange/getListingStatsRolling30Days below),
+  -- matching this app's existing "aggregate on read, don't pre-store
+  -- rollups" convention already used for keyword_stats.
+  CREATE TABLE IF NOT EXISTS daily_listing_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL REFERENCES shop_listings(id),
+    date TEXT NOT NULL,
+    views INTEGER,
+    favorites INTEGER,
+    units_sold INTEGER,
+    revenue_cents INTEGER,
+    source TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(listing_id, date)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_daily_listing_stats_date ON daily_listing_stats(date);
+
+  -- Single fixed row (id=1, always upserted) holding the current Etsy
+  -- OAuth tokens. Losing this on a Render redeploy wipe (see the
+  -- ephemeral-disk caveat at the top of this file) breaks the whole
+  -- nightly pipeline until the owner re-does the one-time consent click
+  -- — same accepted trade-off as everything else in this file, just the
+  -- highest-impact table to lose.
+  CREATE TABLE IF NOT EXISTS etsy_oauth_tokens (
+    id INTEGER PRIMARY KEY,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    scope TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- Single fixed row (id=1) holding the in-flight PKCE code_verifier +
+  -- state for the OAuth authorize -> callback round trip. Persisted here
+  -- rather than an in-memory variable since Render's process isn't
+  -- guaranteed stable across the redirect gap.
+  CREATE TABLE IF NOT EXISTS etsy_oauth_pkce (
+    id INTEGER PRIMARY KEY,
+    state TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- Dated copy of getTagScores() output, written unconditionally every
+  -- nightly run (no dedup needed — cheap, and keyword_stats itself only
+  -- changes on irregular manual CSV uploads, so most nights will
+  -- naturally duplicate the same scored_month, which is fine). This is
+  -- what gives quarter-over-quarter tag-score history for the weekly
+  -- sheet and the Etsy Coach quarter comparison.
+  -- Matches getTagScores()'s byVisits shape exactly (keyword, visits,
+  -- status) rather than the finer-grained internal visitsStatus/
+  -- conversionStatus/cutCandidate fields, which getTagScores() doesn't
+  -- actually expose — this snapshot is for quarter-over-quarter history
+  -- in the weekly sheet, not for any live rule logic (server/etsyCoach.js
+  -- calls getTagScores() directly for that, always on fresh data).
+  CREATE TABLE IF NOT EXISTS tag_score_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date TEXT NOT NULL,
+    scored_month TEXT NOT NULL,
+    keyword TEXT NOT NULL,
+    visits INTEGER,
+    status TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_tag_score_snapshots_date ON tag_score_snapshots(snapshot_date);
+  CREATE INDEX IF NOT EXISTS idx_tag_score_snapshots_month ON tag_score_snapshots(scored_month);
+
+  -- Single flag store for every Etsy Coach rule output (best-seller,
+  -- trend-push, restock, 30-day-new-listing-review), distinguished by
+  -- flag_type rather than one table per rule. metric_snapshot_json keeps
+  -- the numbers that produced the flag (units sold, threshold, baseline
+  -- average) for later debugging without recomputing. UNIQUE makes a
+  -- nightly re-run idempotent instead of piling up duplicate flags.
+  CREATE TABLE IF NOT EXISTS etsy_coach_flags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL REFERENCES shop_listings(id),
+    review_date TEXT NOT NULL,
+    flag_type TEXT NOT NULL,
+    message TEXT NOT NULL,
+    metric_snapshot_json TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(listing_id, review_date, flag_type)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_etsy_coach_flags_date ON etsy_coach_flags(review_date);
+  CREATE INDEX IF NOT EXISTS idx_etsy_coach_flags_type ON etsy_coach_flags(flag_type);
+
+  -- One row per pipeline STEP per run (not one row per run) — generalizes
+  -- reminder_runs' single-check heartbeat to a 5-step pipeline where each
+  -- step can independently fail, so e.g. an Etsy outage doesn't mask
+  -- whether the Sheets write still succeeded that night.
+  CREATE TABLE IF NOT EXISTS nightly_sync_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_date TEXT NOT NULL,
+    step TEXT NOT NULL,
+    status TEXT NOT NULL,
+    detail TEXT,
+    duration_ms INTEGER,
+    ran_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- Small key-value settings store — used for thresholds the shop owner
+  -- adjusts live from the UI (Top Sellers / restock alert minimums).
+  -- Deliberately NOT env vars: changing an env var on Render requires a
+  -- redeploy, and this app's SQLite file is wiped on every redeploy/
+  -- restart (see the caveat at the top of this file) unless a paid
+  -- Persistent Disk is attached — so an env-var threshold would carry a
+  -- hidden "also wipes your data" side effect for a setting that has
+  -- nothing to do with the data layer.
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `)
+
+// SQLite has no `ADD COLUMN IF NOT EXISTS` — this checks PRAGMA
+// table_info first so re-running it on every boot (like the
+// CREATE TABLE IF NOT EXISTS block above) is a safe no-op once the
+// column already exists.
+function ensureColumn(table, column, definition) {
+  const existing = db.prepare(`PRAGMA table_info(${table})`).all()
+  if (existing.some((col) => col.name === column)) return
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+}
+
+// Cached competitor listing data (Days 23-24 work) — nullable until the
+// nightly refresh has run at least once. Only listing-type competitor
+// URLs are auto-refreshable in v1 (see server/competitors.js); shop-type
+// URLs stay null here with an explanatory note from the refresh step.
+ensureColumn('competitors', 'title', 'TEXT')
+ensureColumn('competitors', 'tags_json', 'TEXT')
+ensureColumn('competitors', 'thumbnail_url', 'TEXT')
+ensureColumn('competitors', 'last_synced_at', 'TEXT')
 
 function saveListing({ etsyListingId = null, title, category = null }) {
   const result = db
@@ -220,6 +390,337 @@ function addCompetitor(url) {
 function removeCompetitor(id) {
   const result = db.prepare(`DELETE FROM competitors WHERE id = ?`).run(id)
   return result.changes > 0
+}
+
+function updateCompetitorSnapshot(id, { title, tagsJson, thumbnailUrl }) {
+  db.prepare(
+    `UPDATE competitors SET title = ?, tags_json = ?, thumbnail_url = ?, last_synced_at = datetime('now') WHERE id = ?`
+  ).run(title ?? null, tagsJson ?? null, thumbnailUrl ?? null, id)
+}
+
+// --- app_settings: small key-value store for live-adjustable thresholds ---
+
+function getSetting(key, fallback) {
+  const row = db.prepare(`SELECT value FROM app_settings WHERE key = ?`).get(key)
+  return row ? row.value : fallback
+}
+
+function setSetting(key, value) {
+  db.prepare(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(key, String(value))
+}
+
+function getAllSettings() {
+  return Object.fromEntries(
+    db.prepare(`SELECT key, value FROM app_settings`).all().map((row) => [row.key, row.value])
+  )
+}
+
+// Only these two keys are adjustable from the UI — everything else in
+// app_settings (there is nothing else yet) stays code-only. Deliberately
+// an allowlist rather than accepting any key, since this is a
+// password-gated but still world-reachable endpoint.
+const ADJUSTABLE_SETTING_KEYS = ['top_seller_min_units_30d', 'restock_alert_min_units_30d']
+
+// GET returns both settings (with defaults filled in if never set) plus
+// the allowlist, so the frontend knows what it's allowed to change.
+// PATCH body { key, value } updates one — value must be a positive
+// integer, since both current settings are unit-count thresholds.
+function createAppSettingsHandler(env, passwordsMatch) {
+  return async (req, res) => {
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      if (req.method === 'GET') {
+        res.end(
+          JSON.stringify({
+            ok: true,
+            topSellerMinUnits30d: Number(getSetting('top_seller_min_units_30d', '3')),
+            restockAlertMinUnits30d: Number(getSetting('restock_alert_min_units_30d', '20')),
+          })
+        )
+        return
+      }
+
+      if (req.method === 'PATCH') {
+        let body = ''
+        for await (const chunk of req) body += chunk
+        const { key, value } = JSON.parse(body || '{}')
+
+        if (!ADJUSTABLE_SETTING_KEYS.includes(key)) {
+          res.statusCode = 400
+          res.end(JSON.stringify({ error: `key must be one of: ${ADJUSTABLE_SETTING_KEYS.join(', ')}.` }))
+          return
+        }
+        const numericValue = Number(value)
+        if (!Number.isInteger(numericValue) || numericValue < 0) {
+          res.statusCode = 400
+          res.end(JSON.stringify({ error: 'value must be a non-negative whole number.' }))
+          return
+        }
+
+        setSetting(key, numericValue)
+        res.end(JSON.stringify({ ok: true, key, value: numericValue }))
+        return
+      }
+
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+    } catch (err) {
+      res.statusCode = 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
+// --- shop_listings ---
+
+// Upserts on etsy_listing_id — the nightly sync re-runs this for every
+// listing every time, so "insert if new, refresh if known" in one
+// statement avoids a separate exists-check round trip.
+function upsertShopListing({
+  etsyListingId,
+  title,
+  thumbnailUrl,
+  tagsJson,
+  categoryId,
+  etsyCreatedAt,
+}) {
+  db.prepare(
+    `INSERT INTO shop_listings (etsy_listing_id, title, thumbnail_url, tags_json, category_id, etsy_created_at, last_synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(etsy_listing_id) DO UPDATE SET
+       title = excluded.title,
+       thumbnail_url = excluded.thumbnail_url,
+       tags_json = excluded.tags_json,
+       etsy_created_at = excluded.etsy_created_at,
+       last_synced_at = excluded.last_synced_at`
+  ).run(
+    etsyListingId,
+    title,
+    thumbnailUrl ?? null,
+    tagsJson ?? null,
+    categoryId ?? null,
+    etsyCreatedAt ?? null
+  )
+  return db.prepare(`SELECT id FROM shop_listings WHERE etsy_listing_id = ?`).get(etsyListingId).id
+}
+
+function setListingSeasonal(listingId, isSeasonal) {
+  db.prepare(`UPDATE shop_listings SET is_seasonal = ? WHERE id = ?`).run(
+    isSeasonal ? 1 : 0,
+    listingId
+  )
+}
+
+function getShopListings() {
+  return db.prepare(`SELECT * FROM shop_listings ORDER BY title`).all()
+}
+
+function getListingsCreatedSince(isoDate) {
+  return db
+    .prepare(`SELECT * FROM shop_listings WHERE etsy_created_at >= ? ORDER BY etsy_created_at DESC`)
+    .all(isoDate)
+}
+
+// --- daily_listing_stats ---
+
+function upsertDailyListingStats({
+  listingId,
+  date,
+  views,
+  favorites,
+  unitsSold,
+  revenueCents,
+  source,
+}) {
+  db.prepare(
+    `INSERT INTO daily_listing_stats (listing_id, date, views, favorites, units_sold, revenue_cents, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(listing_id, date) DO UPDATE SET
+       views = excluded.views,
+       favorites = excluded.favorites,
+       units_sold = excluded.units_sold,
+       revenue_cents = excluded.revenue_cents,
+       source = excluded.source`
+  ).run(
+    listingId,
+    date,
+    views ?? null,
+    favorites ?? null,
+    unitsSold ?? null,
+    revenueCents ?? null,
+    source ?? null
+  )
+}
+
+// Raw per-listing aggregates over an arbitrary [startDate, endDate]
+// (inclusive, 'YYYY-MM-DD' strings) — the one shared aggregate query
+// every rollup (weekly/monthly/quarterly) is built on top of, matching
+// the same on-read-aggregation convention getKeywordAggregatesForMonths
+// already uses instead of pre-materialized rollup tables.
+//
+// IMPORTANT: views/favorites are Etsy's own LIFETIME CUMULATIVE counters
+// captured once per day (confirmed via a live API call — Etsy doesn't
+// expose a per-day views/favorites feed), so naively SUM()-ing them
+// across a date range would wildly overcount. viewsGained/
+// favoritesGained below are computed correctly as (latest snapshot in
+// range) - (earliest snapshot in range) instead. units_sold/
+// revenue_cents, by contrast, come from actual receipt transactions on
+// each specific day, so SUM() is the correct, honest total for those.
+function getListingStatsForDateRange(startDate, endDate) {
+  return db
+    .prepare(
+      `SELECT sl.id AS listingId, sl.title, sl.thumbnail_url AS thumbnailUrl,
+              sl.is_seasonal AS isSeasonal, sl.etsy_created_at AS etsyCreatedAt,
+              SUM(dls.units_sold) AS unitsSold, SUM(dls.revenue_cents) AS revenueCents,
+              (
+                SELECT views FROM daily_listing_stats
+                WHERE listing_id = sl.id AND date BETWEEN ? AND ? AND views IS NOT NULL
+                ORDER BY date DESC LIMIT 1
+              ) - (
+                SELECT views FROM daily_listing_stats
+                WHERE listing_id = sl.id AND date BETWEEN ? AND ? AND views IS NOT NULL
+                ORDER BY date ASC LIMIT 1
+              ) AS viewsGained,
+              (
+                SELECT favorites FROM daily_listing_stats
+                WHERE listing_id = sl.id AND date BETWEEN ? AND ? AND favorites IS NOT NULL
+                ORDER BY date DESC LIMIT 1
+              ) - (
+                SELECT favorites FROM daily_listing_stats
+                WHERE listing_id = sl.id AND date BETWEEN ? AND ? AND favorites IS NOT NULL
+                ORDER BY date ASC LIMIT 1
+              ) AS favoritesGained
+       FROM shop_listings sl
+       JOIN daily_listing_stats dls ON dls.listing_id = sl.id
+       WHERE dls.date BETWEEN ? AND ?
+       GROUP BY sl.id`
+    )
+    .all(startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate)
+}
+
+// Rolling 30-day window ending today — used by both Top Sellers and the
+// restock alert, which both key off "the last 30 days" rather than a
+// calendar month/quarter boundary.
+function getListingStatsRolling30Days() {
+  const end = new Date()
+  const start = new Date(end)
+  start.setDate(start.getDate() - 29)
+  const format = (d) => d.toISOString().slice(0, 10)
+  return getListingStatsForDateRange(format(start), format(end))
+}
+
+// --- etsy_oauth_tokens: single fixed row at id=1 ---
+
+function getEtsyOAuthTokens() {
+  return db.prepare(`SELECT * FROM etsy_oauth_tokens WHERE id = 1`).get() || null
+}
+
+function saveEtsyOAuthTokens({ accessToken, refreshToken, expiresAt, scope }) {
+  db.prepare(
+    `INSERT INTO etsy_oauth_tokens (id, access_token, refresh_token, expires_at, scope, updated_at)
+     VALUES (1, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET
+       access_token = excluded.access_token,
+       refresh_token = excluded.refresh_token,
+       expires_at = excluded.expires_at,
+       scope = excluded.scope,
+       updated_at = excluded.updated_at`
+  ).run(accessToken, refreshToken, expiresAt, scope ?? null)
+}
+
+// --- etsy_oauth_pkce: single fixed row at id=1, the in-flight authorize
+// -> callback state ---
+
+function savePkceState({ state, codeVerifier }) {
+  db.prepare(
+    `INSERT INTO etsy_oauth_pkce (id, state, code_verifier, created_at)
+     VALUES (1, ?, ?, datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET
+       state = excluded.state,
+       code_verifier = excluded.code_verifier,
+       created_at = excluded.created_at`
+  ).run(state, codeVerifier)
+}
+
+function getPkceState() {
+  return db.prepare(`SELECT * FROM etsy_oauth_pkce WHERE id = 1`).get() || null
+}
+
+// --- tag_score_snapshots ---
+
+// `rows` is getTagScores()'s byVisits array as-is ({keyword, visits, status}).
+function saveTagScoreSnapshot({ snapshotDate, scoredMonth, rows }) {
+  const insert = db.prepare(`
+    INSERT INTO tag_score_snapshots (snapshot_date, scored_month, keyword, visits, status)
+    VALUES (@snapshotDate, @scoredMonth, @keyword, @visits, @status)
+  `)
+  const insertMany = db.transaction((items) => {
+    for (const item of items) insert.run(item)
+  })
+  insertMany(
+    rows.map((row) => ({
+      snapshotDate,
+      scoredMonth,
+      keyword: row.keyword,
+      visits: row.visits ?? null,
+      status: row.status ?? null,
+    }))
+  )
+  return rows.length
+}
+
+function getTagScoreSnapshotsForMonth(scoredMonth) {
+  return db
+    .prepare(`SELECT * FROM tag_score_snapshots WHERE scored_month = ? ORDER BY snapshot_date DESC`)
+    .all(scoredMonth)
+}
+
+// --- etsy_coach_flags ---
+
+function saveEtsyCoachFlag({ listingId, reviewDate, flagType, message, metricSnapshot }) {
+  db.prepare(
+    `INSERT INTO etsy_coach_flags (listing_id, review_date, flag_type, message, metric_snapshot_json)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(listing_id, review_date, flag_type) DO UPDATE SET
+       message = excluded.message,
+       metric_snapshot_json = excluded.metric_snapshot_json`
+  ).run(listingId, reviewDate, flagType, message, JSON.stringify(metricSnapshot ?? {}))
+}
+
+function getEtsyCoachFlagsForDate(reviewDate) {
+  return db
+    .prepare(
+      `SELECT ecf.*, sl.title AS listingTitle, sl.thumbnail_url AS listingThumbnailUrl
+       FROM etsy_coach_flags ecf
+       JOIN shop_listings sl ON sl.id = ecf.listing_id
+       WHERE ecf.review_date = ?
+       ORDER BY ecf.flag_type, ecf.id`
+    )
+    .all(reviewDate)
+}
+
+function getLatestEtsyCoachFlags() {
+  const latest = db.prepare(`SELECT MAX(review_date) AS reviewDate FROM etsy_coach_flags`).get()
+  if (!latest.reviewDate) return { reviewDate: null, flags: [] }
+  return { reviewDate: latest.reviewDate, flags: getEtsyCoachFlagsForDate(latest.reviewDate) }
+}
+
+// --- nightly_sync_log ---
+
+function logNightlySyncStep({ runDate, step, status, detail, durationMs }) {
+  db.prepare(
+    `INSERT INTO nightly_sync_log (run_date, step, status, detail, duration_ms)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(runDate, step, status, detail ?? null, durationMs ?? null)
+}
+
+function getRecentNightlySyncLog(limit = 20) {
+  return db.prepare(`SELECT * FROM nightly_sync_log ORDER BY ran_at DESC LIMIT ?`).all(limit)
 }
 
 // Table names are from the fixed internal list above, never from request
@@ -544,5 +1045,28 @@ export {
   listCompetitors,
   addCompetitor,
   removeCompetitor,
+  updateCompetitorSnapshot,
+  getSetting,
+  setSetting,
+  getAllSettings,
+  upsertShopListing,
+  setListingSeasonal,
+  getShopListings,
+  getListingsCreatedSince,
+  upsertDailyListingStats,
+  getListingStatsForDateRange,
+  getListingStatsRolling30Days,
+  getEtsyOAuthTokens,
+  saveEtsyOAuthTokens,
+  savePkceState,
+  getPkceState,
+  saveTagScoreSnapshot,
+  getTagScoreSnapshotsForMonth,
+  saveEtsyCoachFlag,
+  getEtsyCoachFlagsForDate,
+  getLatestEtsyCoachFlags,
+  logNightlySyncStep,
+  getRecentNightlySyncLog,
+  createAppSettingsHandler,
   DB_PATH,
 }

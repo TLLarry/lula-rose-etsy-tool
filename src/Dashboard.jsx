@@ -1,10 +1,71 @@
-// Placeholder-only layout for now — no data wiring. Real values (and the
-// click-to-see-why interaction on the performer lists) come once the
-// Etsy API key is active.
-const TOP_PERFORMER_SLOTS = 3
+import { useEffect, useState } from 'react'
+
+// Placeholder-only layout for the rest of this page — no data wiring yet.
+// Real values (and the click-to-see-why interaction on the Bottom 3
+// list) come once the Etsy API key is active. Top 3 Performing Listings
+// is the one row wired to real data (see loadTopSellers below) — ranked
+// by units sold in the last 30 days via server/etsyCoach.js.
 const BOTTOM_PERFORMER_SLOTS = 3
 
-function Dashboard() {
+function Dashboard({ password }) {
+  const [topSellers, setTopSellers] = useState([])
+  const [minUnitsThreshold, setMinUnitsThreshold] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const [thresholdInput, setThresholdInput] = useState('')
+  const [savingThreshold, setSavingThreshold] = useState(false)
+  const [thresholdError, setThresholdError] = useState('')
+
+  const loadTopSellers = () => {
+    setLoading(true)
+    setError('')
+    fetch('/api/top-sellers', { headers: { 'x-app-password': password } })
+      .then(async (response) => {
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || 'Failed to load top sellers.')
+        return body
+      })
+      .then((body) => {
+        setTopSellers(body.listings)
+        setMinUnitsThreshold(body.minUnitsThreshold)
+        setThresholdInput(String(body.minUnitsThreshold))
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadTopSellers()
+    // Only run once on mount — saving a new threshold below re-fires this
+    // explicitly via handleSaveThreshold instead of this re-running.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleSaveThreshold = async () => {
+    const value = Number(thresholdInput)
+    if (!Number.isInteger(value) || value < 0) {
+      setThresholdError('Enter a whole number, 0 or higher.')
+      return
+    }
+    setSavingThreshold(true)
+    setThresholdError('')
+    try {
+      const response = await fetch('/api/app-settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({ key: 'top_seller_min_units_30d', value }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to save that threshold.')
+      loadTopSellers()
+    } catch (err) {
+      setThresholdError(err.message)
+    } finally {
+      setSavingThreshold(false)
+    }
+  }
+
   return (
     <section id="dashboard-page">
       <h1>Welcome back</h1>
@@ -52,15 +113,64 @@ function Dashboard() {
       <div className="dashboard-row dashboard-performers-row">
         <div className="dashboard-performers-box">
           <h2>Top 3 Performing Listings</h2>
-          <ul className="dashboard-performer-list">
-            {Array.from({ length: TOP_PERFORMER_SLOTS }, (_, index) => (
-              <li key={index}>
-                <button type="button" className="dashboard-performer-button">
-                  Will appear here once data is connected.
-                </button>
-              </li>
-            ))}
-          </ul>
+          <p className="subhead">Ranked by units sold in the last 30 days.</p>
+
+          {error && <p className="error">{error}</p>}
+          {loading && <p className="subhead">Loading…</p>}
+
+          {!loading && !error && topSellers.length === 0 && (
+            <p className="subhead">
+              No listings have sold more than {minUnitsThreshold} unit
+              {minUnitsThreshold === 1 ? '' : 's'} in the last 30 days yet.
+            </p>
+          )}
+
+          {!loading && topSellers.length > 0 && (
+            <div className="top-seller-cards">
+              {topSellers.map((listing) => (
+                <div className="top-seller-card" key={listing.listingId}>
+                  {listing.thumbnailUrl && (
+                    <img
+                      className="top-seller-thumb"
+                      src={listing.thumbnailUrl}
+                      alt={listing.title}
+                    />
+                  )}
+                  <div className="top-seller-info">
+                    <p className="top-seller-title">{listing.title}</p>
+                    <p className="subhead">
+                      {listing.unitsSold30d} unit{listing.unitsSold30d === 1 ? '' : 's'} sold
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="top-seller-threshold">
+            <label htmlFor="top-seller-threshold-input">
+              Minimum units sold (30 days) to qualify
+            </label>
+            <div className="top-seller-threshold-row">
+              <input
+                id="top-seller-threshold-input"
+                type="number"
+                min="0"
+                step="1"
+                value={thresholdInput}
+                onChange={(event) => setThresholdInput(event.target.value)}
+              />
+              <button
+                type="button"
+                className="top-seller-threshold-save"
+                onClick={handleSaveThreshold}
+                disabled={savingThreshold}
+              >
+                {savingThreshold ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+            {thresholdError && <p className="error">{thresholdError}</p>}
+          </div>
         </div>
 
         <div className="dashboard-performers-box">

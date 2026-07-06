@@ -1,0 +1,48 @@
+# Triggers the nightly Etsy Coach sync pipeline at 3:00am Phoenix time
+# (America/Phoenix is UTC-7 year-round — no DST — so this UTC time never
+# needs adjusting for daylight saving). Same "external cron wakes
+# Render's sleeping free-tier service" pattern already used by
+# reminder-check.yml — see that file's header comment for the full
+# rationale (in short: Render's free web service sleeps after 15 minutes
+# of inactivity, and this workflow's own HTTP request both fires the
+# sync AND wakes the service).
+#
+# Reuses the exact same RENDER_APP_URL/CRON_SECRET GitHub repository
+# secrets reminder-check.yml already uses — no new secret needed, since
+# /api/run-nightly-sync accepts the same x-cron-secret header.
+name: Nightly Etsy Coach Sync
+
+on:
+  schedule:
+    - cron: '0 10 * * *' # 3:00am Phoenix time
+  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
+
+jobs:
+  run-nightly-sync:
+    runs-on: ubuntu-latest
+    steps:
+      # No -f here on purpose: -f suppresses the response body on an HTTP
+      # error, which is exactly the information needed to diagnose one.
+      # Instead, the status code and body are captured separately, both
+      # printed to the log unconditionally, and the step is failed
+      # manually (exit 1) for anything outside 200-299 - so a real
+      # failure still shows up as a failed run, but with the actual error
+      # visible. Note: a 200 here just means the HTTP request succeeded —
+      # each pipeline STEP's own success/failure is logged separately in
+      # nightly_sync_log (see GET /api/nightly-sync-log), since one
+      # step's failure (e.g. Etsy being down) doesn't fail the whole run.
+      - name: Call /api/run-nightly-sync
+        env:
+          RENDER_APP_URL: ${{ secrets.RENDER_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          response=$(curl -s -w '\n%{http_code}' -X POST "${RENDER_APP_URL}/api/run-nightly-sync" \
+            -H "x-cron-secret: ${CRON_SECRET}")
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          echo "HTTP status: $http_code"
+          echo "Response body: $body"
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "Request failed with status $http_code"
+            exit 1
+          fi

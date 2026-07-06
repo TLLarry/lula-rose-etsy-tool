@@ -97,16 +97,29 @@ async function fetchEtsyListing(env, listingId) {
   }
 
   const data = await response.json()
-  checkListingBelongsToShop(env, data)
 
   return {
     listingId: data.listing_id,
+    shopId: data.shop_id,
     title: typeof data.title === 'string' ? data.title : '',
     description: typeof data.description === 'string' ? data.description : '',
     tags: Array.isArray(data.tags) ? data.tags : [],
     images: normalizeImages(data.images),
     url: typeof data.url === 'string' ? data.url : null,
     state: typeof data.state === 'string' ? data.state : null,
+    // Lifetime cumulative counters, not a per-day feed — confirmed via a
+    // live test call. Public data (no OAuth needed), same as everything
+    // else this function returns.
+    views: typeof data.views === 'number' ? data.views : null,
+    numFavorers: typeof data.num_favorers === 'number' ? data.num_favorers : null,
+    // The TRUE original listing date — `creation_timestamp`/
+    // `created_timestamp` shift on renewal/edit, `original_creation_timestamp`
+    // does not (confirmed via a live test call), so this is the right
+    // field for "listed in the last 30 days" checks.
+    originalCreationTimestamp:
+      typeof data.original_creation_timestamp === 'number'
+        ? data.original_creation_timestamp
+        : null,
   }
 }
 
@@ -141,6 +154,7 @@ function createLoadListingHandler(env, passwordsMatch) {
       }
 
       const listing = await fetchEtsyListing(env, listingId)
+      checkListingBelongsToShop(env, { shop_id: listing.shopId })
       res.end(JSON.stringify({ ok: true, ...listing }))
     } catch (err) {
       res.statusCode = err.status || 500

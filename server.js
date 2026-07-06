@@ -15,6 +15,7 @@ import {
   createDbStatusHandler,
   createDashboardSummaryHandler,
   createPerformanceHandler,
+  createAppSettingsHandler,
 } from './server/db.js'
 import { createUploadCsvHandler } from './server/csvUpload.js'
 import { createTagScoresHandler, createTrendsHandler } from './server/analysis.js'
@@ -25,6 +26,13 @@ import { createLoadListingHandler } from './server/etsyListing.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
 import { createRewriteListingHandler } from './server/listingRevampRewrite.js'
 import { createCompetitorsHandler } from './server/competitors.js'
+import { createEtsyOAuthStartHandler, createEtsyOAuthCallbackHandler } from './server/etsyOAuth.js'
+import {
+  createEtsyCoachFlagsHandler,
+  createQuarterComparisonHandler,
+  createTopSellersHandler,
+} from './server/etsyCoach.js'
+import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
 // real environment variables set in the dashboard, so there's no .env file
@@ -62,6 +70,9 @@ const env = {
   ETSY_API_KEY: process.env.ETSY_API_KEY,
   ETSY_SHARED_SECRET: process.env.ETSY_SHARED_SECRET,
   ETSY_SHOP_ID: process.env.ETSY_SHOP_ID,
+  ETSY_OAUTH_REDIRECT_URI: process.env.ETSY_OAUTH_REDIRECT_URI,
+  GOOGLE_SERVICE_ACCOUNT_JSON: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  GOOGLE_SHEET_ID: process.env.GOOGLE_SHEET_ID,
 }
 
 const app = express()
@@ -84,6 +95,14 @@ app.use('/api/load-listing', createLoadListingHandler(env, passwordsMatch))
 app.use('/api/parse-listing-csv', createParseListingCsvHandler(env, passwordsMatch))
 app.use('/api/rewrite-listing', createRewriteListingHandler(env, passwordsMatch))
 app.use('/api/competitors', createCompetitorsHandler(env, passwordsMatch))
+app.use('/api/etsy-oauth/start', createEtsyOAuthStartHandler(env, passwordsMatch))
+app.use('/api/etsy-oauth/callback', createEtsyOAuthCallbackHandler(env))
+app.use('/api/etsy-coach/flags', createEtsyCoachFlagsHandler(env, passwordsMatch))
+app.use('/api/etsy-coach/quarter-comparison', createQuarterComparisonHandler(env, passwordsMatch))
+app.use('/api/top-sellers', createTopSellersHandler(env, passwordsMatch))
+app.use('/api/app-settings', createAppSettingsHandler(env, passwordsMatch))
+app.use('/api/run-nightly-sync', createRunNightlySyncHandler(env))
+app.use('/api/nightly-sync-log', createNightlySyncLogHandler(env, passwordsMatch))
 
 app.use(express.static(distDir))
 
