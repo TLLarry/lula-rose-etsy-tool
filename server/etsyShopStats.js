@@ -59,9 +59,21 @@ function getPhoenixDateString(epochSeconds) {
   return `${map.year}-${map.month}-${map.day}`
 }
 
+// Confirmed via a live call (while building server/etsyListingDraft.js):
+// Etsy rejects an OAuth-authenticated request with just the API key in
+// x-api-key ("Shared secret is required in x-api-key header"), even
+// with a valid Bearer token present — needs the same
+// `${apiKey}:${sharedSecret}` format fetchEtsyListing already uses for
+// its own (unauthenticated) calls. This was a real, pre-existing bug:
+// every fetchShopListingIds/fetchShopReceiptsSince call has been
+// failing with this exact error since OAuth was reconnected, silently
+// breaking the nightly shop_stats sync step (it reported "failed", not
+// "skipped" — worth checking recent nightly_sync_log entries for how
+// long this masked real data from Weekly Report/Top Sellers/Bottom
+// Performers).
 function authHeaders(env, accessToken) {
   return {
-    'x-api-key': env.ETSY_API_KEY,
+    'x-api-key': `${env.ETSY_API_KEY}:${env.ETSY_SHARED_SECRET}`,
     Authorization: `Bearer ${accessToken}`,
   }
 }

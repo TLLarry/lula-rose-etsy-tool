@@ -83,7 +83,15 @@ async function createEtsyDraftListing(env, listingInput) {
   const response = await fetch(`${ETSY_API_BASE}/shops/${env.ETSY_SHOP_ID}/listings`, {
     method: 'POST',
     headers: {
-      'x-api-key': env.ETSY_API_KEY,
+      // Confirmed via a live call: Etsy rejects OAuth-authenticated
+      // requests here with just the API key in x-api-key ("Shared
+      // secret is required in x-api-key header") even with a valid
+      // Bearer token present — needs the same
+      // `${apiKey}:${sharedSecret}` format fetchEtsyListing already
+      // uses for its own (unauthenticated) calls. This turned out to
+      // be a real, pre-existing bug in etsyShopStats.js's OAuth calls
+      // too (same header, same rejection) — fixed there as well.
+      'x-api-key': `${env.ETSY_API_KEY}:${env.ETSY_SHARED_SECRET}`,
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
