@@ -1,20 +1,25 @@
 // Persistent storage for shop data — keywords, listings, and performance
-// stats. Empty for now; Days 8-11 fill and use it. Uses SQLite via
-// better-sqlite3: a single file, no external database service needed, and
-// it works fine on Render.
+// stats. Uses SQLite via better-sqlite3: a single file, no external
+// database service needed, and it works fine on Render.
 //
-// ⚠️ RENDER FREE-TIER CAVEAT: Render's free tier filesystem is EPHEMERAL —
-// anything written to disk, including this SQLite file, is wiped on every
-// deploy and on every restart/spin-down. That's acceptable right now: this
-// module is about building the schema and read/write functions, not about
-// preserving production data yet. When persistence actually matters, either:
-//   (a) attach a Render Persistent Disk and set the DB_PATH env var to its
-//       mount path (e.g. DB_PATH=/var/data/shop.db) in Render's dashboard —
-//       no code change needed, just the env var, or
-//   (b) swap this module for a hosted database (Postgres, etc.). The
-//       exported functions below are deliberately plain (take/return plain
-//       objects, no SQL leaking out) so callers wouldn't need to change if
-//       the storage backend ever does.
+// PERSISTENCE: DB_PATH should point at a Render Persistent Disk's mount
+// path (e.g. DB_PATH=/var/data/shop.db) so data survives deploys/
+// restarts — without it, Render's default filesystem is ephemeral and
+// this file gets wiped on every deploy/restart/spin-down. No code
+// change needed either way, just the env var.
+//
+// LAZY INIT, ON PURPOSE: opening the database (mkdir + `new Database` +
+// schema creation) is deferred until the FIRST actual query, not run at
+// module-import time. Render Persistent Disks are only mounted at
+// runtime, not during the build step — `vite.config.js` imports every
+// server/*.js handler file (transitively including this one) just to
+// wire up its dev-middleware plugin, and Vite evaluates that config
+// during `vite build` too. Eagerly touching DB_PATH at import time (the
+// previous behavior) meant `npm run build` itself tried to mkdir the
+// not-yet-mounted disk path and crashed with ENOENT. The exported
+// functions below are deliberately plain (take/return plain objects, no
+// SQL leaking out) so callers wouldn't need to change if the storage
+// backend ever does.
 import Database from 'better-sqlite3'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -22,14 +27,47 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// See the Render caveat above — this is the one line to change (via env
-// var, not code) once a persistent disk or different backend is in place.
+// See the PERSISTENCE note above — this is the one line to change (via
+// env var, not code) once a persistent disk or different backend is in
+// place.
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'shop.db')
 
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
+let realDb = null
 
-const db = new Database(DB_PATH)
-db.pragma('journal_mode = WAL')
+// Creates (and memoizes) the real Database connection on first actual
+// use. Everything that used to run unconditionally at module load —
+// mkdir, opening the file, the WAL pragma, full schema creation, every
+// ensureColumn migration — now only runs here, the first time any
+// exported function below actually queries the database.
+function ensureDbInitialized() {
+  if (realDb) return realDb
+
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
+  realDb = new Database(DB_PATH)
+  realDb.pragma('journal_mode = WAL')
+  initializeSchema(realDb)
+  return realDb
+}
+
+// Every exported function in this file queries through this Proxy
+// instead of a plain Database instance — `db.prepare(...)` etc.
+// transparently triggers ensureDbInitialized() on first actual access,
+// so merely IMPORTING this module (as vite.config.js does, to read off
+// the handler-creator functions) has zero filesystem side effects.
+// Binding function properties to the real instance (not the proxy)
+// keeps better-sqlite3's internal `this` usage working normally —
+// confirmed this matters for Database.prototype.transaction, which
+// itself calls back into `this.prepare`/`this.exec` for BEGIN/COMMIT.
+const db = new Proxy(
+  {},
+  {
+    get(_target, prop) {
+      const instance = ensureDbInitialized()
+      const value = instance[prop]
+      return typeof value === 'function' ? value.bind(instance) : value
+    },
+  }
+)
 
 const TABLE_NAMES = [
   'listings',
@@ -50,8 +88,11 @@ const TABLE_NAMES = [
 ]
 
 // Safe to call on every boot — CREATE TABLE/INDEX IF NOT EXISTS is a no-op
-// once the schema already exists.
-db.exec(`
+// once the schema already exists. Takes the real instance directly
+// (not the lazy `db` proxy above) since this IS the code that runs
+// inside ensureDbInitialized(), before that function has returned.
+function initializeSchema(realDbInstance) {
+  realDbInstance.exec(`
   CREATE TABLE IF NOT EXISTS listings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     etsy_listing_id TEXT,
@@ -293,40 +334,37 @@ db.exec(`
   );
 `)
 
-// SQLite has no `ADD COLUMN IF NOT EXISTS` — this checks PRAGMA
-// table_info first so re-running it on every boot (like the
-// CREATE TABLE IF NOT EXISTS block above) is a safe no-op once the
-// column already exists.
-function ensureColumn(table, column, definition) {
-  const existing = db.prepare(`PRAGMA table_info(${table})`).all()
-  if (existing.some((col) => col.name === column)) return
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  // SQLite has no `ADD COLUMN IF NOT EXISTS` — this checks PRAGMA
+  // table_info first so re-running it on every boot (like the
+  // CREATE TABLE IF NOT EXISTS block above) is a safe no-op once the
+  // column already exists.
+  ensureColumn(realDbInstance, 'competitors', 'title', 'TEXT')
+  ensureColumn(realDbInstance, 'competitors', 'tags_json', 'TEXT')
+  ensureColumn(realDbInstance, 'competitors', 'thumbnail_url', 'TEXT')
+  ensureColumn(realDbInstance, 'competitors', 'last_synced_at', 'TEXT')
+  // Which of the seller's OWN shop_listings rows this competitor's tags
+  // should be compared against, for the tag-gap comparison — nullable
+  // until the seller picks one, since there's no automatic way to know
+  // which of their listings "corresponds" to a given competitor.
+  ensureColumn(realDbInstance, 'competitors', 'linked_listing_id', 'INTEGER')
+
+  // The last cumulative views/num_favorers Etsy reported for this
+  // listing, as of the most recent sync — the baseline
+  // server/etsyShopStats.js diffs the NEXT sync's cumulative total
+  // against to compute that day's delta. Nullable: null means "never
+  // synced yet" (a brand-new listing, or any listing synced for the
+  // first time before Etsy OAuth was connected at all) — the sync
+  // treats a null baseline as "record a 0 delta and set this as the new
+  // baseline," never estimating a delta against data that doesn't exist.
+  ensureColumn(realDbInstance, 'shop_listings', 'last_known_views', 'INTEGER')
+  ensureColumn(realDbInstance, 'shop_listings', 'last_known_favorites', 'INTEGER')
 }
 
-// Cached competitor listing data (Days 23-24 work) — nullable until the
-// nightly refresh has run at least once. Only listing-type competitor
-// URLs are auto-refreshable in v1 (see server/competitors.js); shop-type
-// URLs stay null here with an explanatory note from the refresh step.
-ensureColumn('competitors', 'title', 'TEXT')
-ensureColumn('competitors', 'tags_json', 'TEXT')
-ensureColumn('competitors', 'thumbnail_url', 'TEXT')
-ensureColumn('competitors', 'last_synced_at', 'TEXT')
-// Which of the seller's OWN shop_listings rows this competitor's tags
-// should be compared against, for the tag-gap comparison — nullable
-// until the seller picks one, since there's no automatic way to know
-// which of their listings "corresponds" to a given competitor.
-ensureColumn('competitors', 'linked_listing_id', 'INTEGER')
-
-// The last cumulative views/num_favorers Etsy reported for this listing,
-// as of the most recent sync — the baseline server/etsyShopStats.js
-// diffs the NEXT sync's cumulative total against to compute that day's
-// delta. Nullable: null means "never synced yet" (a brand-new listing,
-// or any listing synced for the first time before Etsy OAuth was
-// connected at all) — the sync treats a null baseline as "record a 0
-// delta and set this as the new baseline," never estimating a delta
-// against data that doesn't exist.
-ensureColumn('shop_listings', 'last_known_views', 'INTEGER')
-ensureColumn('shop_listings', 'last_known_favorites', 'INTEGER')
+function ensureColumn(realDbInstance, table, column, definition) {
+  const existing = realDbInstance.prepare(`PRAGMA table_info(${table})`).all()
+  if (existing.some((col) => col.name === column)) return
+  realDbInstance.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+}
 
 function saveListing({ etsyListingId = null, title, category = null }) {
   const result = db
