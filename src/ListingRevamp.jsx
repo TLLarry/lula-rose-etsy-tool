@@ -63,12 +63,18 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   // Carried over from the loaded listing (see server/etsyListing.js) —
   // a revamp doesn't change quantity/price/category by itself, but
   // quantity/price are simple enough to let the seller adjust here too.
-  // taxonomyId is overridable via TaxonomyPicker below; every other
-  // Etsy-required field (who_made, when_made, shipping/readiness/
-  // dimensions) comes straight from `listing` at Draft-click time —
-  // editing those needs their own pickers, out of scope for now.
+  // taxonomyId is overridable via TaxonomyPicker below. whoMade is also
+  // editable — discovered via a real live Draft attempt that Etsy
+  // rejects who_made "someone_else" outright unless the shop has a
+  // registered production partner (Shop Manager > Production Partners),
+  // which this listing's own carried-over data doesn't have — so unlike
+  // when_made/shipping/readiness/dimensions (which stay fixed, pulled
+  // straight from `listing` at Draft-click time), this one needs a way
+  // to correct it or the Draft button is a dead end for any listing in
+  // that situation.
   const [draftQuantity, setDraftQuantity] = useState('')
   const [draftPrice, setDraftPrice] = useState('')
+  const [draftWhoMade, setDraftWhoMade] = useState('i_did')
   const [draftTaxonomyId, setDraftTaxonomyId] = useState(null)
   const [draftTaxonomyLabel, setDraftTaxonomyLabel] = useState('')
   const [creatingDraft, setCreatingDraft] = useState(false)
@@ -111,6 +117,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       // point it has a real label.
       setDraftQuantity(data.quantity != null ? String(data.quantity) : '')
       setDraftPrice(data.price != null ? String(data.price) : '')
+      setDraftWhoMade(data.whoMade || 'i_did')
       setDraftTaxonomyId(data.taxonomyId ?? null)
       setDraftTaxonomyLabel('')
     } catch (err) {
@@ -265,7 +272,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
           tags: draftTags,
           quantity: Number(draftQuantity),
           price: Number(draftPrice),
-          whoMade: listing.whoMade,
+          whoMade: draftWhoMade,
           whenMade: listing.whenMade,
           taxonomyId: draftTaxonomyId,
           shippingProfileId: listing.shippingProfileId,
@@ -748,6 +755,25 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                       value={draftPrice}
                       onChange={(event) => setDraftPrice(event.target.value)}
                     />
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="draft-who-made">Who made it</label>
+                    <select
+                      id="draft-who-made"
+                      value={draftWhoMade}
+                      onChange={(event) => setDraftWhoMade(event.target.value)}
+                    >
+                      <option value="i_did">I did</option>
+                      <option value="someone_else">Another company or person</option>
+                      <option value="collective">A member of my shop</option>
+                    </select>
+                    {draftWhoMade === 'someone_else' && (
+                      <p className="subhead">
+                        Etsy requires a registered production partner for this option (Shop
+                        Manager &gt; Production Partners) — without one, Draft will fail.
+                      </p>
+                    )}
                   </div>
 
                   <TaxonomyPicker

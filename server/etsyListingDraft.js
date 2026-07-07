@@ -220,7 +220,22 @@ async function createEtsyDraftListing(env, listingInput) {
       (data && Array.isArray(data.errors) && data.errors.join('; ')) ||
       (data ? JSON.stringify(data) : await response.text().catch(() => '')) ||
       'no detail returned'
-    throw new RequestError(response.status, `Etsy rejected the draft listing (${response.status}): ${detail}`)
+    // Etsy's raw message for this one is genuinely cryptic ("Oh dear,
+    // you cannot sell this item on Etsy" — no explanation), and it's a
+    // real marketplace policy rule this app has actually hit, not a
+    // hypothetical: who_made "someone_else" needs a registered
+    // production partner (Shop Manager > Production Partners), and a
+    // listing carried over from Etsy with an empty production_partners
+    // list (common for older listings) doesn't have one to reuse. This
+    // app has no way to register one on the seller's behalf — it
+    // requires Etsy's own partner verification process.
+    const clarification = detail.includes('invalid_marketplace')
+      ? " This usually means who_made is \"someone_else\" without a registered production partner — add one in Etsy's Shop Manager under Production Partners, or change who_made to \"i_did\" if that's accurate for this product, then try again."
+      : ''
+    throw new RequestError(
+      response.status,
+      `Etsy rejected the draft listing (${response.status}): ${detail}${clarification}`
+    )
   }
 
   return {
