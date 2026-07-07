@@ -27,6 +27,20 @@
 // all six ("Could not set a calculated shipping profile to the
 // listing..."). Not hard-required here since a flat-rate shipping
 // profile wouldn't need them — passed through whenever present.
+//
+// RESOLVED (the original open question from before this file existed):
+// `price` is a plain decimal on write (e.g. "12.34"), NOT the Money
+// object read returns — confirmed by successfully creating a real
+// draft with price=12.34 and reading it back as amount:1234,
+// divisor:100 ($12.34). buildDraftListingBody's String(price) is
+// correct as written; no conversion needed.
+//
+// Also worth knowing, not a code concern: Etsy's own title-quality
+// filter rejects titles with too many ALL-CAPS words ("more than 3
+// start with 2 sequential capital letters") — hit this with an early
+// all-caps test title. Etsy's error surfaces clearly through this
+// file's existing error handling, so no special-casing was added here;
+// just worth knowing if a rewrite ever produces a shouty title.
 import { getValidAccessToken } from './etsyOAuth.js'
 import { checkAppPassword } from './db.js'
 import { readJsonBody, RequestError } from './listingApi.js'
