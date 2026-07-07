@@ -98,4 +98,4 @@ function createEtsyTaxonomyHandler(env, passwordsMatch) {
   }
 }
 
-export { fetchTaxonomyTree, flattenTaxonomyTree, createEtsyTaxonomyHandler }
+export { fetchTaxonomyTree, flattenTaxonomyTree, getCachedTaxonomyList, createEtsyTaxonomyHandler }

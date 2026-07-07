@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { id: 'listing-revamp', label: 'Listing Revamp' },
   { id: 'low-performers', label: 'Low Performers' },
   { id: 'keyword-analysis', label: 'Keyword Analysis' },
+  { id: 'keyword-bank', label: 'Keyword Bank' },
   { id: 'competitors', label: 'Competitors' },
   { id: 'calendar', label: 'Calendar' },
 ]

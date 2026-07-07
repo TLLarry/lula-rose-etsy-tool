@@ -48,6 +48,7 @@ import {
 import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
 import { createWeeklyReportHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
+import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
 // real environment variables set in the dashboard, so there's no .env file
@@ -135,6 +136,7 @@ app.use('/api/run-nightly-sync', createRunNightlySyncHandler(env))
 app.use('/api/nightly-sync-log', createNightlySyncLogHandler(env, passwordsMatch))
 app.use('/api/weekly-report', createWeeklyReportHandler(env, passwordsMatch))
 app.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))
+app.use('/api/keyword-bank-scan', createKeywordBankScanHandler(env, passwordsMatch))
 
 app.use(express.static(distDir))
 

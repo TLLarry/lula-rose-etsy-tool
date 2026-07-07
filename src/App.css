@@ -645,6 +645,7 @@ mark {
 #title-writer,
 #dashboard-page,
 #keyword-analysis-page,
+#keyword-bank-page,
 #etsy-coach-page,
 #calendar-page,
 #listing-revamp-page,
@@ -670,6 +671,7 @@ mark {
 #title-writer h1,
 #dashboard-page h1,
 #keyword-analysis-page h1,
+#keyword-bank-page h1,
 #etsy-coach-page h1,
 #calendar-page h1,
 #listing-revamp-page h1,
@@ -1625,5 +1627,57 @@ mark {
 /* Same reused background as .prep-now-section — no new color. */
 .calendar-quarter-card.current {
   background: var(--code-bg);
+}
+
+/* Reuses .result's card look for each category — same border/radius/
+   background convention as every other grouped-content card in this
+   app, rather than inventing a new visual style for this page. */
+.keyword-bank-category {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--code-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.keyword-bank-category h2 {
+  text-align: left;
+  margin: 0;
+}
+
+.keyword-bank-keywords {
+  list-style: decimal;
+  padding-left: 22px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.keyword-bank-keywords li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.keyword-bank-listings summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-h);
+  margin-top: 4px;
+}
+
+.keyword-bank-listings ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.keyword-bank-listings li {
+  margin-bottom: 4px;
 }
 

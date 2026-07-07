@@ -10,6 +10,7 @@ import EtsyCoach from './EtsyCoach'
 import Calendar from './Calendar'
 import ListingRevamp from './ListingRevamp'
 import LowPerformers from './LowPerformers'
+import KeywordBank from './KeywordBank'
 
 function App() {
   // In-memory only — resets on tab close/refresh, never persisted to
@@ -62,6 +63,7 @@ function App() {
         {activePage === 'low-performers' && (
           <LowPerformers password={password} onRevamp={handleRevampHandoff} />
         )}
+        {activePage === 'keyword-bank' && <KeywordBank password={password} />}
       </main>
     </div>
   )

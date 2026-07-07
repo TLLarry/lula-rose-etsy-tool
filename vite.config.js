@@ -42,6 +42,7 @@ import {
 import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
 import { createWeeklyReportHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
+import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -123,6 +124,10 @@ function etsyTitleWriterPlugin(env) {
         createNightlySyncLogHandler(env, passwordsMatch)
       )
       server.middlewares.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))
+      server.middlewares.use(
+        '/api/keyword-bank-scan',
+        createKeywordBankScanHandler(env, passwordsMatch)
+      )
       server.middlewares.use('/api/weekly-report', createWeeklyReportHandler(env, passwordsMatch))
     },
   }
