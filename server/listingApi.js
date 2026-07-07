@@ -1417,4 +1417,5 @@ export {
   RequestError,
   generateTitle,
   generateListingExtras,
+  validateImages,
 }

@@ -6,10 +6,21 @@
 // front-loaded in the first 40, all 13 tags at 20 characters max with no
 // repeats, and the same keyword-rich natural header/body.
 //
-// No images, categories, or seller facts here — this rewrites the
-// text-only fields off a description plus the winning keywords, not a
-// full from-scratch listing generation with photos.
-import { generateTitle, generateListingExtras, readJsonBody, RequestError } from './listingApi.js'
+// Images (Day 21) reuse the exact same validateImages() the main writer
+// uses, and get passed straight into generateTitle/generateListingExtras
+// like the main writer does — so an uploaded photo actually influences
+// the rewrite (per generateListingExtras' own system prompt, treating
+// photos as the primary source of truth), not just a cosmetic upload
+// widget. No seller facts or category selection here, though — this
+// still rewrites off a description plus the winning keywords/photos, not
+// a full from-scratch listing generation.
+import {
+  generateTitle,
+  generateListingExtras,
+  readJsonBody,
+  RequestError,
+  validateImages,
+} from './listingApi.js'
 import { checkAppPassword } from './db.js'
 
 // Turns the ranked keyword list from /api/parse-listing-csv into the
@@ -42,7 +53,7 @@ function createRewriteListingHandler(env, passwordsMatch) {
     if (!checkAppPassword(req, res, env, passwordsMatch)) return
 
     try {
-      const { description, keywords: rawKeywords } = await readJsonBody(req)
+      const { description, keywords: rawKeywords, images: rawImages } = await readJsonBody(req)
 
       if (!Array.isArray(rawKeywords) || rawKeywords.length === 0) {
         throw new RequestError(
@@ -60,14 +71,15 @@ function createRewriteListingHandler(env, passwordsMatch) {
           "Provide a description of this listing to rewrite around — its current description, or a rough summary of the product."
         )
       }
+      const images = validateImages(rawImages)
 
-      const title = await generateTitle(env.ANTHROPIC_API_KEY, description, keywords, [])
+      const title = await generateTitle(env.ANTHROPIC_API_KEY, description, keywords, images)
       const extras = await generateListingExtras(
         env.ANTHROPIC_API_KEY,
         description,
         keywords,
         title,
-        [],
+        images,
         {}
       )
 
@@ -78,6 +90,9 @@ function createRewriteListingHandler(env, passwordsMatch) {
           tags: extras.tags,
           header: extras.header,
           body: extras.body,
+          // Omitted entirely (not even an empty array) when no images
+          // were uploaded, matching the main writer's own response shape.
+          ...(images.length > 0 ? { altText: extras.altText } : {}),
         })
       )
     } catch (err) {

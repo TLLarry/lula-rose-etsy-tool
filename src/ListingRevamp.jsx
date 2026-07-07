@@ -158,11 +158,30 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
           // worked, rather than diluting the model's prompt with
           // Average/Weak/Cut-candidate keywords too.
           keywords: csvResult.topKeywords,
+          // Day 21 — same shape the Listing Tool sends, so an uploaded
+          // photo actually informs the rewrite instead of just sitting
+          // in the UI unused.
+          images: photos.map((photo) => ({
+            mediaType: photo.mediaType,
+            data: photo.base64,
+            name: photo.name,
+          })),
         }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to rewrite this listing.')
       setRewriteResult(data)
+      // AI-suggested alt text, present only when photos were uploaded —
+      // seeds each photo's alt-text field the same way rewriteDescription
+      // gets seeded from the loaded listing; still editable afterward.
+      if (Array.isArray(data.altText)) {
+        setPhotos((prev) =>
+          prev.map((photo, index) => ({
+            ...photo,
+            altText: data.altText[index]?.altText ?? photo.altText,
+          }))
+        )
+      }
     } catch (err) {
       setRewriteError(err.message)
     } finally {
@@ -190,7 +209,12 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
           return {
             id: `${file.name}-${file.lastModified}-${file.size}`,
             name: file.name,
+            mediaType: file.type,
             dataUrl,
+            // Same base64 payload the Listing Tool sends to the API
+            // (Day 21) — captured up front so the rewrite call has
+            // everything it needs without re-deriving it from dataUrl.
+            base64: dataUrl.split(',')[1],
             altText: '',
           }
         })
@@ -565,7 +589,9 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
         <h2>Listing Photos</h2>
         <p className="subhead">
           Same upload rules as the Listing Tool — JPEG or PNG, up to 5MB each, {MAX_IMAGES} max.
-          You can also paste an image (Ctrl+V / Cmd+V) copied from anywhere.
+          You can also paste an image (Ctrl+V / Cmd+V) copied from anywhere. Any photos uploaded
+          here are used by Rewrite Listing above — Claude looks at them as the primary source of
+          truth alongside your description, and will suggest alt text for each one.
         </p>
 
         <div className="field">
