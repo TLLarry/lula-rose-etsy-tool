@@ -336,7 +336,14 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
           tags: draftTags,
           quantity: Number(draftQuantity),
           price: Number(draftPrice),
+          // who_made/when_made/is_supply form one interdependent group
+          // on write (confirmed via a real Etsy rejection) — when_made
+          // and is_supply aren't editable in this UI, so they're always
+          // carried over from the loaded listing alongside whoMade,
+          // which is editable.
           whoMade: draftWhoMade,
+          whenMade: listing.whenMade,
+          isSupply: listing.isSupply,
           taxonomyId: draftTaxonomyId,
           images: photos.map((photo) => ({
             mediaType: photo.mediaType,

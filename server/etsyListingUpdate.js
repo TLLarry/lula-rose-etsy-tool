@@ -34,7 +34,8 @@ const WHO_MADE_VALUES = ['i_did', 'someone_else', 'collective']
 // listing's lifecycle state as a side effect of an edit; that's a
 // distinct, deliberate action this app doesn't expose at all yet.
 function validateListingUpdateInput(body) {
-  const { listingId, title, description, tags, quantity, price, whoMade, taxonomyId } = body || {}
+  const { listingId, title, description, tags, quantity, price, whoMade, whenMade, isSupply, taxonomyId } =
+    body || {}
 
   if (!Number.isInteger(listingId) || listingId <= 0) {
     throw new RequestError(400, 'A valid listingId is required to update a listing.')
@@ -71,6 +72,24 @@ function validateListingUpdateInput(body) {
     }
     updates.price = price
   }
+  // who_made/when_made/is_supply form one interdependent group on
+  // write, confirmed via a real live update attempt: Etsy rejects
+  // changing who_made without also sending when_made and is_supply
+  // ("Cannot update 'when_made' without 'who_made' and without
+  // 'is_supply' and vice versa"). Rather than reject a request that
+  // sends only one or two, all three are required together whenever
+  // any of them is present — simpler and more predictable for the
+  // caller than trying to guess which partial combinations Etsy might
+  // silently tolerate.
+  const productionFieldsProvided = [whoMade, whenMade, isSupply].filter(
+    (value) => value !== undefined
+  ).length
+  if (productionFieldsProvided > 0 && productionFieldsProvided < 3) {
+    throw new RequestError(
+      400,
+      'who_made, when_made, and is_supply must all be provided together — Etsy rejects updating just one or two.'
+    )
+  }
   if (whoMade !== undefined) {
     if (!WHO_MADE_VALUES.includes(whoMade)) {
       throw new RequestError(
@@ -78,7 +97,15 @@ function validateListingUpdateInput(body) {
         `who_made must be one of: ${WHO_MADE_VALUES.join(', ')} (got ${JSON.stringify(whoMade)}).`
       )
     }
+    if (typeof whenMade !== 'string' || !whenMade.trim()) {
+      throw new RequestError(400, 'when_made is required alongside who_made.')
+    }
+    if (typeof isSupply !== 'boolean') {
+      throw new RequestError(400, 'is_supply (true/false) is required alongside who_made.')
+    }
     updates.whoMade = whoMade
+    updates.whenMade = whenMade
+    updates.isSupply = isSupply
   }
   if (taxonomyId !== undefined) {
     if (!Number.isInteger(taxonomyId) || taxonomyId <= 0) {
@@ -92,12 +119,14 @@ function validateListingUpdateInput(body) {
 
 // price/quantity are deliberately absent here — see the header comment
 // on why they don't belong in this endpoint's body at all.
-function buildListingUpdateBody({ title, description, tags, whoMade, taxonomyId }) {
+function buildListingUpdateBody({ title, description, tags, whoMade, whenMade, isSupply, taxonomyId }) {
   const params = new URLSearchParams()
   if (title !== undefined) params.set('title', title)
   if (description !== undefined) params.set('description', description)
   if (tags !== undefined && tags.length > 0) params.set('tags', tags.join(','))
   if (whoMade !== undefined) params.set('who_made', whoMade)
+  if (whenMade !== undefined) params.set('when_made', whenMade)
+  if (isSupply !== undefined) params.set('is_supply', String(isSupply))
   if (taxonomyId !== undefined) params.set('taxonomy_id', String(taxonomyId))
   return params
 }

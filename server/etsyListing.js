@@ -194,6 +194,13 @@ async function fetchEtsyListing(env, listingId) {
     itemWeightUnit: typeof data.item_weight_unit === 'string' ? data.item_weight_unit : null,
     itemDimensionsUnit:
       typeof data.item_dimensions_unit === 'string' ? data.item_dimensions_unit : null,
+    // Discovered via a real updateListing test call: who_made/when_made/
+    // is_supply form one interdependent group on write — Etsy rejects
+    // an update that changes who_made without also sending when_made
+    // and is_supply ("Cannot update 'when_made' without 'who_made' and
+    // without 'is_supply' and vice versa"). Carried over here for the
+    // same reason as whoMade/whenMade themselves.
+    isSupply: typeof data.is_supply === 'boolean' ? data.is_supply : null,
   }
 }
 
