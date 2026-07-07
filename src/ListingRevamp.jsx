@@ -153,7 +153,11 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
         headers: { 'Content-Type': 'application/json', 'x-app-password': password },
         body: JSON.stringify({
           description: rewriteDescription,
-          keywords: csvResult.keywords,
+          // The curated 1-3 winning keywords (Day 19), not the full
+          // ranked list — seeding the rewrite with only what actually
+          // worked, rather than diluting the model's prompt with
+          // Average/Weak/Cut-candidate keywords too.
+          keywords: csvResult.topKeywords,
         }),
       })
       const data = await response.json()
