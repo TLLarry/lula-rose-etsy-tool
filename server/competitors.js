@@ -15,6 +15,8 @@ import {
   addCompetitor,
   removeCompetitor,
   updateCompetitorSnapshot,
+  linkCompetitorListing,
+  getShopListings,
   checkAppPassword,
 } from './db.js'
 import { readJsonBody, RequestError } from './listingApi.js'
@@ -210,10 +212,80 @@ function createCompetitorRefreshHandler(env, passwordsMatch) {
   }
 }
 
+// GET /api/shop-listings — the seller's own tracked listings, for the
+// "which of my listings should this competitor be compared against?"
+// picker. Deliberately minimal (id/title/thumbnail only, not the full
+// shop_listings row) since this is only ever used to populate a
+// dropdown. Same x-app-password auth as every other endpoint.
+function createShopListingsPickerHandler(env, passwordsMatch) {
+  return (req, res) => {
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      const listings = getShopListings().map((listing) => ({
+        id: listing.id,
+        title: listing.title,
+        thumbnailUrl: listing.thumbnail_url,
+      }))
+      res.end(JSON.stringify({ ok: true, listings }))
+    } catch (err) {
+      res.statusCode = 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
+// POST /api/competitors/link-listing, body { competitorId, listingId }.
+// Links (or re-links) a tracked competitor to one of the seller's own
+// listings so the frontend can compute the tag-gap comparison — pure
+// bookkeeping, no Etsy call. Same x-app-password auth as every other
+// endpoint.
+function createCompetitorLinkListingHandler(env, passwordsMatch) {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      const { competitorId: rawCompetitorId, listingId: rawListingId } = await readJsonBody(req)
+      const competitorId = Number(rawCompetitorId)
+      if (!Number.isInteger(competitorId) || competitorId <= 0) {
+        throw new RequestError(400, 'A valid competitor id is required.')
+      }
+      if (!getCompetitorById(competitorId)) {
+        throw new RequestError(404, 'That competitor is no longer tracked.')
+      }
+
+      const listingId = Number(rawListingId)
+      if (!Number.isInteger(listingId) || listingId <= 0) {
+        throw new RequestError(400, 'Select one of your listings to compare against.')
+      }
+
+      linkCompetitorListing(competitorId, listingId)
+      res.end(JSON.stringify({ ok: true, competitors: listCompetitors() }))
+    } catch (err) {
+      res.statusCode = err.status || 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
 export {
   isEtsyCompetitorUrl,
   createCompetitorsHandler,
   refreshCompetitorData,
   refreshOneCompetitor,
   createCompetitorRefreshHandler,
+  createShopListingsPickerHandler,
+  createCompetitorLinkListingHandler,
 }

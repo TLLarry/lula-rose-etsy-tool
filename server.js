@@ -25,7 +25,12 @@ import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
 import { createLoadListingHandler } from './server/etsyListing.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
 import { createRewriteListingHandler } from './server/listingRevampRewrite.js'
-import { createCompetitorsHandler, createCompetitorRefreshHandler } from './server/competitors.js'
+import {
+  createCompetitorsHandler,
+  createCompetitorRefreshHandler,
+  createShopListingsPickerHandler,
+  createCompetitorLinkListingHandler,
+} from './server/competitors.js'
 import { createEtsyOAuthStartHandler, createEtsyOAuthCallbackHandler } from './server/etsyOAuth.js'
 import {
   createEtsyCoachFlagsHandler,
@@ -100,7 +105,12 @@ app.use('/api/rewrite-listing', createRewriteListingHandler(env, passwordsMatch)
 // /api/competitors/refresh request would get swallowed by the broader
 // handler instead.
 app.use('/api/competitors/refresh', createCompetitorRefreshHandler(env, passwordsMatch))
+app.use(
+  '/api/competitors/link-listing',
+  createCompetitorLinkListingHandler(env, passwordsMatch)
+)
 app.use('/api/competitors', createCompetitorsHandler(env, passwordsMatch))
+app.use('/api/shop-listings', createShopListingsPickerHandler(env, passwordsMatch))
 app.use('/api/etsy-oauth/start', createEtsyOAuthStartHandler(env, passwordsMatch))
 app.use('/api/etsy-oauth/callback', createEtsyOAuthCallbackHandler(env))
 app.use('/api/etsy-coach/flags', createEtsyCoachFlagsHandler(env, passwordsMatch))

@@ -296,6 +296,11 @@ ensureColumn('competitors', 'title', 'TEXT')
 ensureColumn('competitors', 'tags_json', 'TEXT')
 ensureColumn('competitors', 'thumbnail_url', 'TEXT')
 ensureColumn('competitors', 'last_synced_at', 'TEXT')
+// Which of the seller's OWN shop_listings rows this competitor's tags
+// should be compared against, for the tag-gap comparison — nullable
+// until the seller picks one, since there's no automatic way to know
+// which of their listings "corresponds" to a given competitor.
+ensureColumn('competitors', 'linked_listing_id', 'INTEGER')
 
 // The last cumulative views/num_favorers Etsy reported for this listing,
 // as of the most recent sync — the baseline server/etsyShopStats.js
@@ -387,8 +392,24 @@ function logReminderSend({ eventId, checkDate, slot, status, messageId, error })
   return result.lastInsertRowid
 }
 
+// Joins in the linked shop_listings row (if any) so the tag-gap
+// comparison on the frontend has both sides' tags in one response — no
+// second fetch needed per competitor. Aliased distinctly from the
+// competitor's own title/tags_json/thumbnail_url columns so neither
+// side clobbers the other in the result row.
 function listCompetitors() {
-  return db.prepare(`SELECT * FROM competitors ORDER BY created_at DESC`).all()
+  return db
+    .prepare(
+      `SELECT
+         competitors.*,
+         shop_listings.title AS linked_listing_title,
+         shop_listings.tags_json AS linked_listing_tags_json,
+         shop_listings.thumbnail_url AS linked_listing_thumbnail_url
+       FROM competitors
+       LEFT JOIN shop_listings ON shop_listings.id = competitors.linked_listing_id
+       ORDER BY competitors.created_at DESC`
+    )
+    .all()
 }
 
 function getCompetitorById(id) {
@@ -405,6 +426,16 @@ function addCompetitor(url) {
 function removeCompetitor(id) {
   const result = db.prepare(`DELETE FROM competitors WHERE id = ?`).run(id)
   return result.changes > 0
+}
+
+// Links (or re-links) a competitor to one of the seller's own
+// shop_listings rows, for the tag-gap comparison. Passing null clears
+// the link (e.g. if the picked listing gets removed later).
+function linkCompetitorListing(competitorId, listingId) {
+  db.prepare(`UPDATE competitors SET linked_listing_id = ? WHERE id = ?`).run(
+    listingId ?? null,
+    competitorId
+  )
 }
 
 function updateCompetitorSnapshot(id, { title, tagsJson, thumbnailUrl }) {
@@ -1099,6 +1130,7 @@ export {
   addCompetitor,
   removeCompetitor,
   updateCompetitorSnapshot,
+  linkCompetitorListing,
   getSetting,
   setSetting,
   getAllSettings,

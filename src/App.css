@@ -1124,6 +1124,64 @@ mark {
   margin: 0;
 }
 
+/* Tag-gap comparison — same latte card the rest of Day 23's competitor
+   card uses, just a distinct sub-section once a listing is linked. */
+.competitor-gap-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--latte-border);
+  padding-top: 12px;
+}
+
+.competitor-comparing-against {
+  margin: 0;
+  color: var(--text-h);
+}
+
+.competitor-change-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  text-decoration: underline;
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.competitor-gap-group h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.competitor-gap-list {
+  list-style: disc;
+  padding-left: 20px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-h);
+}
+
+.competitor-link-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+
+  select {
+    font: inherit;
+    font-size: 14px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-h);
+  }
+}
+
 .analysis-section {
   display: flex;
   flex-direction: column;
