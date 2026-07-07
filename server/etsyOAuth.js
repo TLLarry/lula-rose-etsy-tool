@@ -34,7 +34,13 @@
 // parameter is your app's API Key keystring") and ETSY_SHARED_SECRET for
 // the token exchange — no separate OAuth credential needed.
 import crypto from 'node:crypto'
-import { getPkceState, savePkceState, getEtsyOAuthTokens, saveEtsyOAuthTokens } from './db.js'
+import {
+  getPkceState,
+  savePkceState,
+  getEtsyOAuthTokens,
+  saveEtsyOAuthTokens,
+  checkAppPassword,
+} from './db.js'
 import { RequestError } from './listingApi.js'
 
 const AUTHORIZE_URL = 'https://www.etsy.com/oauth/connect'
@@ -256,9 +262,41 @@ function isEtsyOAuthConnected() {
   return getEtsyOAuthTokens() !== null
 }
 
+// GET /api/etsy-oauth/status — a small operational check, useful any
+// time (not just right after reconnecting): is Etsy connected at all,
+// and with which scope? Deliberately exposes only that metadata, never
+// the actual access_token/refresh_token values.
+function createEtsyOAuthStatusHandler(env, passwordsMatch) {
+  return (req, res) => {
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    const tokens = getEtsyOAuthTokens()
+    if (!tokens) {
+      res.end(JSON.stringify({ ok: true, connected: false }))
+      return
+    }
+    res.end(
+      JSON.stringify({
+        ok: true,
+        connected: true,
+        scope: tokens.scope,
+        expiresAt: tokens.expires_at,
+        updatedAt: tokens.updated_at,
+      })
+    )
+  }
+}
+
 export {
   createEtsyOAuthStartHandler,
   createEtsyOAuthCallbackHandler,
+  createEtsyOAuthStatusHandler,
   getValidAccessToken,
   isEtsyOAuthConnected,
   OAUTH_SCOPES,

@@ -25,7 +25,11 @@ import {
   createShopListingsPickerHandler,
   createCompetitorLinkListingHandler,
 } from './server/competitors.js'
-import { createEtsyOAuthStartHandler, createEtsyOAuthCallbackHandler } from './server/etsyOAuth.js'
+import {
+  createEtsyOAuthStartHandler,
+  createEtsyOAuthCallbackHandler,
+  createEtsyOAuthStatusHandler,
+} from './server/etsyOAuth.js'
 import {
   createEtsyCoachFlagsHandler,
   createQuarterComparisonHandler,
@@ -83,6 +87,10 @@ function etsyTitleWriterPlugin(env) {
       )
       server.middlewares.use('/api/etsy-oauth/start', createEtsyOAuthStartHandler(env, passwordsMatch))
       server.middlewares.use('/api/etsy-oauth/callback', createEtsyOAuthCallbackHandler(env))
+      server.middlewares.use(
+        '/api/etsy-oauth/status',
+        createEtsyOAuthStatusHandler(env, passwordsMatch)
+      )
       server.middlewares.use(
         '/api/etsy-coach/flags',
         createEtsyCoachFlagsHandler(env, passwordsMatch)

@@ -31,7 +31,11 @@ import {
   createShopListingsPickerHandler,
   createCompetitorLinkListingHandler,
 } from './server/competitors.js'
-import { createEtsyOAuthStartHandler, createEtsyOAuthCallbackHandler } from './server/etsyOAuth.js'
+import {
+  createEtsyOAuthStartHandler,
+  createEtsyOAuthCallbackHandler,
+  createEtsyOAuthStatusHandler,
+} from './server/etsyOAuth.js'
 import {
   createEtsyCoachFlagsHandler,
   createQuarterComparisonHandler,
@@ -115,6 +119,7 @@ app.use('/api/competitors', createCompetitorsHandler(env, passwordsMatch))
 app.use('/api/shop-listings', createShopListingsPickerHandler(env, passwordsMatch))
 app.use('/api/etsy-oauth/start', createEtsyOAuthStartHandler(env, passwordsMatch))
 app.use('/api/etsy-oauth/callback', createEtsyOAuthCallbackHandler(env))
+app.use('/api/etsy-oauth/status', createEtsyOAuthStatusHandler(env, passwordsMatch))
 app.use('/api/etsy-coach/flags', createEtsyCoachFlagsHandler(env, passwordsMatch))
 app.use('/api/etsy-coach/quarter-comparison', createQuarterComparisonHandler(env, passwordsMatch))
 app.use('/api/top-sellers', createTopSellersHandler(env, passwordsMatch))
