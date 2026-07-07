@@ -152,6 +152,13 @@ async function fetchEtsyListing(env, listingId) {
       data.price && typeof data.price.currency_code === 'string' ? data.price.currency_code : null,
     whoMade: typeof data.who_made === 'string' ? data.who_made : null,
     whenMade: typeof data.when_made === 'string' ? data.when_made : null,
+    // The 5th required createDraftListing field. Carried over from the
+    // ORIGINAL listing being revamped by default — a revamp changes the
+    // title/tags/description, not what product this actually is, so the
+    // same category almost always still applies. server/etsyTaxonomy.js
+    // is the override path: a searchable picker for the rare case the
+    // seller wants to change it before creating the draft.
+    taxonomyId: typeof data.taxonomy_id === 'number' ? data.taxonomy_id : null,
   }
 }
 
