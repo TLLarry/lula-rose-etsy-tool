@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { splitAtSnippetBoundary } from './textSnippet.js'
 import { MAX_IMAGES, ALLOWED_IMAGE_TYPES, readFileAsDataUrl, validateImageFiles } from './imageUpload.js'
+import TaxonomyPicker from './TaxonomyPicker'
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024
 const MIN_TITLE_LENGTH = 135
@@ -51,6 +51,30 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   const [rewriteResult, setRewriteResult] = useState(null)
   const [rewriteError, setRewriteError] = useState('')
 
+  // Editable review copy — seeded from rewriteResult once a rewrite
+  // completes, but kept as separate state so the seller can edit before
+  // ever calling Etsy. Nothing here is submitted until the "Draft"
+  // button is clicked; generating a rewrite never touches Etsy's write
+  // API by itself.
+  const [draftTitle, setDraftTitle] = useState('')
+  const [draftTags, setDraftTags] = useState([])
+  const [draftHeader, setDraftHeader] = useState('')
+  const [draftBody, setDraftBody] = useState('')
+  // Carried over from the loaded listing (see server/etsyListing.js) —
+  // a revamp doesn't change quantity/price/category by itself, but
+  // quantity/price are simple enough to let the seller adjust here too.
+  // taxonomyId is overridable via TaxonomyPicker below; every other
+  // Etsy-required field (who_made, when_made, shipping/readiness/
+  // dimensions) comes straight from `listing` at Draft-click time —
+  // editing those needs their own pickers, out of scope for now.
+  const [draftQuantity, setDraftQuantity] = useState('')
+  const [draftPrice, setDraftPrice] = useState('')
+  const [draftTaxonomyId, setDraftTaxonomyId] = useState(null)
+  const [draftTaxonomyLabel, setDraftTaxonomyLabel] = useState('')
+  const [creatingDraft, setCreatingDraft] = useState(false)
+  const [draftCreateResult, setDraftCreateResult] = useState(null)
+  const [draftCreateError, setDraftCreateError] = useState('')
+
   const [photos, setPhotos] = useState([])
   const [photoError, setPhotoError] = useState('')
   const photoFileInputRef = useRef(null)
@@ -78,6 +102,17 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       // seller can still edit it before rewriting, and re-loading a
       // different listing re-seeds it.
       setRewriteDescription(data.description || '')
+      // Seeds the Draft form's quantity/price/category from THIS
+      // listing — re-loading a different listing re-seeds these too,
+      // same as rewriteDescription above. No label resolution here
+      // (that would mean fetching the full ~3,065-category list just to
+      // show one name) — TaxonomyPicker falls back to showing the raw
+      // ID until the seller opens it and picks something, at which
+      // point it has a real label.
+      setDraftQuantity(data.quantity != null ? String(data.quantity) : '')
+      setDraftPrice(data.price != null ? String(data.price) : '')
+      setDraftTaxonomyId(data.taxonomyId ?? null)
+      setDraftTaxonomyLabel('')
     } catch (err) {
       setError(err.message)
     } finally {
@@ -172,6 +207,17 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to rewrite this listing.')
       setRewriteResult(data)
+      // Seeds the editable review fields from this fresh rewrite — a
+      // second Rewrite click re-seeds them, discarding any in-progress
+      // edits, same as every other "generate then edit" seed in this
+      // file. Clears any earlier Draft result/error too, since it
+      // referred to the previous copy.
+      setDraftTitle(data.title)
+      setDraftTags(data.tags)
+      setDraftHeader(data.header)
+      setDraftBody(data.body)
+      setDraftCreateResult(null)
+      setDraftCreateError('')
       // AI-suggested alt text, present only when photos were uploaded —
       // seeds each photo's alt-text field the same way rewriteDescription
       // gets seeded from the loaded listing; still editable afterward.
@@ -187,6 +233,58 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       setRewriteError(err.message)
     } finally {
       setRewriting(false)
+    }
+  }
+
+  const handleDraftTagChange = (index, value) => {
+    setDraftTags((prev) => prev.map((tag, i) => (i === index ? value : tag)))
+  }
+
+  const handleRemoveDraftTag = (index) => {
+    setDraftTags((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  // The actual write action — only ever called by clicking "Draft",
+  // never automatically. who_made/when_made/shipping/readiness/
+  // dimensions all come straight from the loaded listing (no editable
+  // form for those yet); title/tags/description and quantity/price/
+  // category reflect whatever's currently in the review form, edits
+  // included.
+  const handleCreateDraft = async () => {
+    if (!listing) return
+    setCreatingDraft(true)
+    setDraftCreateError('')
+    setDraftCreateResult(null)
+    try {
+      const response = await fetch('/api/create-draft-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({
+          title: draftTitle,
+          description: `${draftHeader} ${draftBody}`,
+          tags: draftTags,
+          quantity: Number(draftQuantity),
+          price: Number(draftPrice),
+          whoMade: listing.whoMade,
+          whenMade: listing.whenMade,
+          taxonomyId: draftTaxonomyId,
+          shippingProfileId: listing.shippingProfileId,
+          readinessStateId: listing.readinessStateId,
+          itemWeight: listing.itemWeight,
+          itemLength: listing.itemLength,
+          itemWidth: listing.itemWidth,
+          itemHeight: listing.itemHeight,
+          itemWeightUnit: listing.itemWeightUnit,
+          itemDimensionsUnit: listing.itemDimensionsUnit,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to create the draft listing.')
+      setDraftCreateResult(data)
+    } catch (err) {
+      setDraftCreateError(err.message)
+    } finally {
+      setCreatingDraft(false)
     }
   }
 
@@ -536,34 +634,55 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
         {rewriteResult &&
           (() => {
             const titleOutOfRange =
-              rewriteResult.title.length < MIN_TITLE_LENGTH ||
-              rewriteResult.title.length > MAX_TITLE_LENGTH
+              draftTitle.length < MIN_TITLE_LENGTH || draftTitle.length > MAX_TITLE_LENGTH
             const headerOutOfRange =
-              rewriteResult.header.length < MIN_HEADER_LENGTH ||
-              rewriteResult.header.length > MAX_HEADER_LENGTH
-            const snippetSplit = splitAtSnippetBoundary(rewriteResult.header, rewriteResult.body)
+              draftHeader.length < MIN_HEADER_LENGTH || draftHeader.length > MAX_HEADER_LENGTH
 
             return (
               <div className="result">
+                <p className="subhead">
+                  Review and edit anything below before creating a draft — nothing is sent to
+                  Etsy until you click Draft.
+                </p>
+
                 <div className="result-section">
                   <h2>Title</h2>
-                  <p className="title-text">{rewriteResult.title}</p>
+                  <div className="field">
+                    <input
+                      type="text"
+                      value={draftTitle}
+                      onChange={(event) => setDraftTitle(event.target.value)}
+                    />
+                  </div>
                   <p className={`char-count${titleOutOfRange ? ' over' : ''}`}>
-                    {rewriteResult.title.length} / {MAX_TITLE_LENGTH} characters
+                    {draftTitle.length} / {MAX_TITLE_LENGTH} characters
                   </p>
                 </div>
 
                 <div className="result-section">
-                  <h2>Tags ({rewriteResult.tags.length}/13)</h2>
+                  <h2>Tags ({draftTags.length}/13)</h2>
                   <ol className="tags-list">
-                    {rewriteResult.tags.map((tag, index) => (
-                      <li key={`${index}-${tag}`}>
-                        <span className="tag-text">{tag}</span>
+                    {draftTags.map((tag, index) => (
+                      <li key={index}>
+                        <input
+                          type="text"
+                          className="tag-edit-input"
+                          value={tag}
+                          onChange={(event) => handleDraftTagChange(index, event.target.value)}
+                        />
                         <span
                           className={`char-count small${tag.length > MAX_TAG_LENGTH ? ' over' : ''}`}
                         >
                           {tag.length}/{MAX_TAG_LENGTH}
                         </span>
+                        <button
+                          type="button"
+                          className="tag-remove-link"
+                          onClick={() => handleRemoveDraftTag(index)}
+                          aria-label={`Remove tag ${tag}`}
+                        >
+                          ×
+                        </button>
                       </li>
                     ))}
                   </ol>
@@ -571,37 +690,103 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
 
                 <div className="result-section">
                   <h2>Description header</h2>
-                  <p className="header-text">
-                    <mark>{snippetSplit.headerHighlighted}</mark>
-                    {snippetSplit.cutoffIn === 'header' && snippetSplit.headerRest && (
-                      <>
-                        <span className="snippet-marker" title="First 160 characters end here">
-                          160
-                        </span>
-                        {snippetSplit.headerRest}
-                      </>
-                    )}
+                  <p className="subhead">
+                    One natural-reading sentence — this is what shows up as the Google search
+                    snippet.
                   </p>
+                  <div className="field">
+                    <textarea
+                      rows={2}
+                      value={draftHeader}
+                      onChange={(event) => setDraftHeader(event.target.value)}
+                    />
+                  </div>
                   <p className={`char-count${headerOutOfRange ? ' over' : ''}`}>
-                    {rewriteResult.header.length}/{MAX_HEADER_LENGTH}
+                    {draftHeader.length}/{MAX_HEADER_LENGTH}
                   </p>
                 </div>
 
                 <div className="result-section">
                   <h2>Description body</h2>
-                  <p className="body-text">
-                    {snippetSplit.cutoffIn === 'body' ? (
-                      <>
-                        <mark>{snippetSplit.bodyHighlighted}</mark>
-                        <span className="snippet-marker" title="First 160 characters end here">
-                          160
-                        </span>
-                        {snippetSplit.bodyRest}
-                      </>
-                    ) : (
-                      rewriteResult.body
-                    )}
+                  <div className="field">
+                    <textarea
+                      rows={6}
+                      value={draftBody}
+                      onChange={(event) => setDraftBody(event.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="result-section">
+                  <h2>Push to Etsy</h2>
+                  <p className="subhead">
+                    Creates a new DRAFT listing in your shop with the content above — it won't be
+                    visible to buyers until you publish it yourself from Etsy. Quantity and price
+                    carry over from the listing you loaded; change the category below if the
+                    revamp calls for it.
                   </p>
+
+                  <div className="field">
+                    <label htmlFor="draft-quantity">Quantity</label>
+                    <input
+                      id="draft-quantity"
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={draftQuantity}
+                      onChange={(event) => setDraftQuantity(event.target.value)}
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="draft-price">Price (USD)</label>
+                    <input
+                      id="draft-price"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={draftPrice}
+                      onChange={(event) => setDraftPrice(event.target.value)}
+                    />
+                  </div>
+
+                  <TaxonomyPicker
+                    password={password}
+                    value={draftTaxonomyId}
+                    valueLabel={draftTaxonomyLabel}
+                    onChange={(id, path) => {
+                      setDraftTaxonomyId(id)
+                      setDraftTaxonomyLabel(path)
+                    }}
+                  />
+
+                  <button
+                    type="button"
+                    className="revamp-button"
+                    onClick={handleCreateDraft}
+                    disabled={
+                      creatingDraft ||
+                      !draftTitle.trim() ||
+                      draftTags.length === 0 ||
+                      !draftQuantity ||
+                      !draftPrice ||
+                      !draftTaxonomyId
+                    }
+                  >
+                    {creatingDraft ? 'Creating Draft…' : 'Draft'}
+                  </button>
+
+                  {draftCreateError && <p className="error">{draftCreateError}</p>}
+
+                  {draftCreateResult && (
+                    <p className="draft-success">
+                      Draft created —{' '}
+                      <a href={draftCreateResult.url} target="_blank" rel="noreferrer">
+                        view it on Etsy
+                      </a>
+                      . It stays in draft state until you publish it yourself.
+                    </p>
+                  )}
                 </div>
               </div>
             )
