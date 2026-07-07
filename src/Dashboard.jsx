@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import WeeklyReport from './WeeklyReport'
 
 // Placeholder-only layout for the rest of this page — no data wiring yet.
 // Real values (and the click-to-see-why interaction on the Bottom 3
@@ -70,6 +71,8 @@ function Dashboard({ password }) {
     <section id="dashboard-page">
       <h1>Welcome back</h1>
       <p className="subhead">Here's your shop at a glance.</p>
+
+      <WeeklyReport password={password} />
 
       <div className="dashboard-row summary-cards">
         <div className="summary-card">

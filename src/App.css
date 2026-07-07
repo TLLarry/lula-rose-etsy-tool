@@ -714,6 +714,12 @@ mark {
   background: var(--latte);
   border: 1px solid var(--latte-border);
   font-weight: 600;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 }
 
 .summary-cards {

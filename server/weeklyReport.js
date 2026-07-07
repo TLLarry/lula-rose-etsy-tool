@@ -159,7 +159,15 @@ function generateWeeklyReport(referenceDate = new Date()) {
   const trendingUp = diffRows.filter((row) => row.movement === 'Climbing').slice(0, TRENDING_COUNT)
   const trendingDown = diffRows.filter((row) => row.movement === 'Falling').slice(0, TRENDING_COUNT)
 
+  // Same small-N pitfall as underperformers, just in the opposite
+  // direction: with few tracked listings, a plain top-N by units sold
+  // can still surface a listing with ZERO sales this week just because
+  // nothing else was better - confirmed with fixture data (a listing
+  // that was actively declining, with 0 sales, still landed in "top
+  // performers" purely for lack of competition). A listing only
+  // qualifies as a top performer if it actually sold something.
   const topPerformers = [...thisWeekRows]
+    .filter((row) => (row.unitsSold ?? 0) > 0)
     .sort((a, b) => (b.unitsSold ?? 0) - (a.unitsSold ?? 0))
     .slice(0, TOP_PERFORMERS_COUNT)
     .map((row) => ({

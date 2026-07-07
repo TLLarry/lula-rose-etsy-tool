@@ -54,6 +54,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   const [photos, setPhotos] = useState([])
   const [photoError, setPhotoError] = useState('')
   const photoFileInputRef = useRef(null)
+  const [copiedAltId, setCopiedAltId] = useState(null)
 
   // Accepts an optional explicit URL — needed for the Low Performers
   // "Revamp" button handoff (see the pendingListingUrl effect below),
@@ -262,6 +263,22 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     )
   }
 
+  // Same clipboard convenience the Listing Tool's own alt-text list
+  // already has — this page had been missing it despite otherwise
+  // matching that page's upload rules exactly.
+  const handleCopyAltText = async (id, text) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedAltId(id)
+      setTimeout(() => {
+        setCopiedAltId((current) => (current === id ? null : current))
+      }, 1500)
+    } catch {
+      // Clipboard API can be blocked by browser permissions — nothing to
+      // recover from here, the text is still visible to copy manually.
+    }
+  }
+
   return (
     <section id="listing-revamp-page">
       <h1>Listing Revamp</h1>
@@ -299,10 +316,16 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       >
         {loading ? 'Loading…' : 'Load Listing'}
       </button>
-      <button type="button" className="revamp-button">
+      {/* Not built yet — combining the competitor link above into an
+          automatic rewrite is future scope. Disabled rather than left
+          clickable-but-inert, so it doesn't look broken in the
+          meantime. Competitor-informed comparisons live on the
+          Competitor Benchmarking page today (tag-gap analysis against
+          a linked listing of yours). */}
+      <button type="button" className="revamp-button" disabled title="Coming soon">
         Revamp My Listing
       </button>
-      <button type="button" className="revamp-button">
+      <button type="button" className="revamp-button" disabled title="Coming soon">
         Combine Both
       </button>
 
@@ -637,7 +660,10 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
         {photos.length > 0 && (
           <div className="result-section">
             <h2>Alt Text</h2>
-            <p className="subhead">One entry per uploaded photo, in upload order.</p>
+            <p className="subhead">
+              One entry per uploaded photo, in upload order. Edit any field before copying it
+              into Etsy.
+            </p>
             <div className="alt-text-list">
               {photos.map((photo) => {
                 const overAlt = photo.altText.length > MAX_ALT_TEXT_LENGTH
@@ -653,6 +679,13 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                           value={photo.altText}
                           onChange={(event) => handlePhotoAltTextChange(photo.id, event.target.value)}
                         />
+                        <button
+                          type="button"
+                          className="upload-button"
+                          onClick={() => handleCopyAltText(photo.id, photo.altText)}
+                        >
+                          {copiedAltId === photo.id ? 'Copied' : 'Copy'}
+                        </button>
                       </div>
                       <p className={`char-count small${overAlt ? ' over' : ''}`}>
                         {photo.altText.length}/{MAX_ALT_TEXT_LENGTH}
