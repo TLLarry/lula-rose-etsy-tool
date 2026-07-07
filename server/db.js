@@ -276,6 +276,21 @@ db.exec(`
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- Single fixed row (id=1) holding the latest generated Weekly Report —
+  -- same "one current row, always overwritten" pattern as
+  -- etsy_oauth_tokens, since the dashboard only ever needs the most
+  -- recent report, not a growing history of past weeks. The report
+  -- itself is regenerated fresh every night (server/weeklyReport.js),
+  -- so this table is just a cache of the last generation, not the
+  -- source of truth (daily_listing_stats is).
+  CREATE TABLE IF NOT EXISTS weekly_reports (
+    id INTEGER PRIMARY KEY,
+    generated_at TEXT NOT NULL,
+    week_start TEXT NOT NULL,
+    week_end TEXT NOT NULL,
+    report_json TEXT NOT NULL
+  );
 `)
 
 // SQLite has no `ADD COLUMN IF NOT EXISTS` — this checks PRAGMA
@@ -462,6 +477,25 @@ function getAllSettings() {
   return Object.fromEntries(
     db.prepare(`SELECT key, value FROM app_settings`).all().map((row) => [row.key, row.value])
   )
+}
+
+// --- weekly_reports: single fixed row (id=1) holding the latest Weekly
+// Report, regenerated nightly by server/weeklyReport.js ---
+
+function saveWeeklyReport({ generatedAt, weekStart, weekEnd, reportJson }) {
+  db.prepare(
+    `INSERT INTO weekly_reports (id, generated_at, week_start, week_end, report_json)
+     VALUES (1, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       generated_at = excluded.generated_at,
+       week_start = excluded.week_start,
+       week_end = excluded.week_end,
+       report_json = excluded.report_json`
+  ).run(generatedAt, weekStart, weekEnd, reportJson)
+}
+
+function getLatestWeeklyReport() {
+  return db.prepare(`SELECT * FROM weekly_reports WHERE id = 1`).get() || null
 }
 
 // Only these two keys are adjustable from the UI — everything else in
@@ -1134,6 +1168,8 @@ export {
   getSetting,
   setSetting,
   getAllSettings,
+  saveWeeklyReport,
+  getLatestWeeklyReport,
   upsertShopListing,
   setListingSeasonal,
   getShopListings,

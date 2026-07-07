@@ -1,16 +1,17 @@
-// Nightly pipeline orchestrator — sequences all five automatic steps
+// Nightly pipeline orchestrator — sequences all six automatic steps
 // (shop stats, competitor refresh, tag-score snapshot, Etsy Coach review,
-// Google Sheets write), logging each independently to nightly_sync_log
-// and continuing past a single step's failure (an Etsy outage shouldn't
-// block that night's Sheets write of whatever data is already there).
-// Every step here is Etsy-API-and-math only — zero Claude API calls,
-// matching the hard rule that automatic processes never touch the
-// Claude/Anthropic API.
+// weekly report, Google Sheets write), logging each independently to
+// nightly_sync_log and continuing past a single step's failure (an Etsy
+// outage shouldn't block that night's Sheets write of whatever data is
+// already there). Every step here is Etsy-API-and-math only — zero
+// Claude API calls, matching the hard rule that automatic processes
+// never touch the Claude/Anthropic API.
 import { isEtsyOAuthConnected } from './etsyOAuth.js'
 import { syncShopListingsAndStats } from './etsyShopStats.js'
 import { refreshCompetitorData } from './competitors.js'
 import { getTagScores } from './analysis.js'
 import { runEtsyCoachReview } from './etsyCoach.js'
+import { generateAndStoreWeeklyReport } from './weeklyReport.js'
 import { writeWeeklySummary, isGoogleSheetsConfigured } from './googleSheets.js'
 import {
   getAvailableMonths,
@@ -73,6 +74,13 @@ async function runNightlySync(env) {
   )
 
   results.push(await runStep(runDate, 'coach_review', () => runEtsyCoachReview()))
+
+  results.push(
+    await runStep(runDate, 'weekly_report', () => {
+      const report = generateAndStoreWeeklyReport()
+      return { hasData: report.hasData, weekStart: report.weekStart, weekEnd: report.weekEnd }
+    })
+  )
 
   results.push(
     await runStep(runDate, 'sheet_write', () => {

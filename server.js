@@ -38,6 +38,7 @@ import {
   createTopSellersHandler,
 } from './server/etsyCoach.js'
 import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
+import { createWeeklyReportHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
@@ -119,6 +120,7 @@ app.use('/api/top-sellers', createTopSellersHandler(env, passwordsMatch))
 app.use('/api/app-settings', createAppSettingsHandler(env, passwordsMatch))
 app.use('/api/run-nightly-sync', createRunNightlySyncHandler(env))
 app.use('/api/nightly-sync-log', createNightlySyncLogHandler(env, passwordsMatch))
+app.use('/api/weekly-report', createWeeklyReportHandler(env, passwordsMatch))
 app.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))
 
 app.use(express.static(distDir))

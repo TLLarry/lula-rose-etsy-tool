@@ -1190,6 +1190,69 @@ mark {
   padding-top: 24px;
 }
 
+/* Weekly Report — same latte card the competitor cards use, for the
+   home dashboard. */
+.weekly-report-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--latte-border);
+  background: var(--latte);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+
+.weekly-report-card h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.weekly-report-range {
+  margin: -6px 0 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.weekly-report-summary {
+  margin: 0;
+  color: var(--text-h);
+}
+
+.weekly-report-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--latte-border);
+  padding-top: 10px;
+}
+
+.weekly-report-section h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.weekly-report-list {
+  list-style: disc;
+  padding-left: 20px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-h);
+}
+
+.weekly-report-underperformers li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.weekly-report-recommendation {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
 /* Same side-by-side, plain-white/thin-outline box pattern as the
    Dashboard's performer boxes (.dashboard-performers-row/-box). */
 .tag-scores-row {
