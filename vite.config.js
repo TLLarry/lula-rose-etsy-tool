@@ -19,7 +19,7 @@ import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
 import { createLoadListingHandler } from './server/etsyListing.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
 import { createRewriteListingHandler } from './server/listingRevampRewrite.js'
-import { createCompetitorsHandler } from './server/competitors.js'
+import { createCompetitorsHandler, createCompetitorRefreshHandler } from './server/competitors.js'
 import { createEtsyOAuthStartHandler, createEtsyOAuthCallbackHandler } from './server/etsyOAuth.js'
 import {
   createEtsyCoachFlagsHandler,
@@ -58,6 +58,12 @@ function etsyTitleWriterPlugin(env) {
       server.middlewares.use(
         '/api/rewrite-listing',
         createRewriteListingHandler(env, passwordsMatch)
+      )
+      // Must be registered before '/api/competitors' — connect middleware
+      // matches by path prefix, same reasoning as server.js.
+      server.middlewares.use(
+        '/api/competitors/refresh',
+        createCompetitorRefreshHandler(env, passwordsMatch)
       )
       server.middlewares.use('/api/competitors', createCompetitorsHandler(env, passwordsMatch))
       server.middlewares.use('/api/etsy-oauth/start', createEtsyOAuthStartHandler(env, passwordsMatch))

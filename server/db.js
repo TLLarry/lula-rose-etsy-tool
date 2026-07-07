@@ -391,6 +391,10 @@ function listCompetitors() {
   return db.prepare(`SELECT * FROM competitors ORDER BY created_at DESC`).all()
 }
 
+function getCompetitorById(id) {
+  return db.prepare(`SELECT * FROM competitors WHERE id = ?`).get(id)
+}
+
 function addCompetitor(url) {
   const result = db.prepare(`INSERT INTO competitors (url) VALUES (?)`).run(url)
   return result.lastInsertRowid
@@ -1091,6 +1095,7 @@ export {
   hasReminderBeenSent,
   logReminderSend,
   listCompetitors,
+  getCompetitorById,
   addCompetitor,
   removeCompetitor,
   updateCompetitorSnapshot,

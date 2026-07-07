@@ -25,7 +25,7 @@ import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
 import { createLoadListingHandler } from './server/etsyListing.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
 import { createRewriteListingHandler } from './server/listingRevampRewrite.js'
-import { createCompetitorsHandler } from './server/competitors.js'
+import { createCompetitorsHandler, createCompetitorRefreshHandler } from './server/competitors.js'
 import { createEtsyOAuthStartHandler, createEtsyOAuthCallbackHandler } from './server/etsyOAuth.js'
 import {
   createEtsyCoachFlagsHandler,
@@ -95,6 +95,11 @@ app.use('/api/run-reminder-check', createRunReminderCheckHandler(env))
 app.use('/api/load-listing', createLoadListingHandler(env, passwordsMatch))
 app.use('/api/parse-listing-csv', createParseListingCsvHandler(env, passwordsMatch))
 app.use('/api/rewrite-listing', createRewriteListingHandler(env, passwordsMatch))
+// Must be registered before '/api/competitors' — app.use matches by path
+// prefix, so the more specific route needs to come first or every
+// /api/competitors/refresh request would get swallowed by the broader
+// handler instead.
+app.use('/api/competitors/refresh', createCompetitorRefreshHandler(env, passwordsMatch))
 app.use('/api/competitors', createCompetitorsHandler(env, passwordsMatch))
 app.use('/api/etsy-oauth/start', createEtsyOAuthStartHandler(env, passwordsMatch))
 app.use('/api/etsy-oauth/callback', createEtsyOAuthCallbackHandler(env))

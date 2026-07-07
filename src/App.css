@@ -1046,27 +1046,82 @@ mark {
   padding-top: 24px;
 }
 
-.competitor-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+.competitor-card-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
 }
 
-.competitor-item {
+.competitor-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--latte-border);
+  background: var(--latte);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.competitor-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
 }
 
 .competitor-url {
   color: var(--text-h);
   overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.competitor-card-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.competitor-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.competitor-card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.competitor-title {
+  color: var(--text-h);
+  font-weight: 600;
+  margin: 0;
+}
+
+.competitor-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.competitor-tag-pill {
+  background: var(--bg);
+  border: 1px solid var(--latte-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--text-h);
+}
+
+.competitor-synced-at {
+  color: var(--text);
+  font-size: 12px;
+  margin: 0;
 }
 
 .analysis-section {

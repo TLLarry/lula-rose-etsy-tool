@@ -11,13 +11,19 @@
 // resolution path is a separate, larger scope item.
 import {
   listCompetitors,
+  getCompetitorById,
   addCompetitor,
   removeCompetitor,
   updateCompetitorSnapshot,
   checkAppPassword,
 } from './db.js'
 import { readJsonBody, RequestError } from './listingApi.js'
-import { parseListingIdFromUrl, fetchEtsyListing } from './etsyListing.js'
+import {
+  parseListingIdFromUrl,
+  fetchEtsyListing,
+  isEtsyConfigured,
+  getMissingEtsyEnvVars,
+} from './etsyListing.js'
 
 // Accepts either a shop link (etsy.com/shop/ShopName) or a listing link
 // (etsy.com/listing/12345/slug), with or without a locale prefix
@@ -122,4 +128,92 @@ async function refreshCompetitorData(env) {
   return { total: competitors.length, refreshed, skipped, failed }
 }
 
-export { isEtsyCompetitorUrl, createCompetitorsHandler, refreshCompetitorData }
+// Pulls ONE competitor's title/tags/thumbnail on demand (the "Pull Data"/
+// "Refresh" button) — same fetchEtsyListing call refreshCompetitorData
+// already uses nightly, same API-key-only auth, no OAuth. Throws a
+// RequestError with a clear, user-facing message for every failure mode
+// the UI needs to show inline: shop-type links (not resolvable yet, see
+// this file's header comment), a since-removed competitor row, and a
+// dead/removed/inactive Etsy listing (fetchEtsyListing's own 404 message
+// is written for "you pasted your own link wrong," which doesn't fit a
+// competitor's listing going away on its own — reworded here instead).
+async function refreshOneCompetitor(env, id) {
+  if (!isEtsyConfigured(env)) {
+    throw new RequestError(
+      503,
+      `Etsy isn't configured yet — missing: ${getMissingEtsyEnvVars(env).join(', ')}.`
+    )
+  }
+
+  const competitor = getCompetitorById(id)
+  if (!competitor) {
+    throw new RequestError(404, 'That competitor is no longer tracked.')
+  }
+  if (!isListingTypeUrl(competitor.url)) {
+    throw new RequestError(
+      400,
+      "This is a shop link, not a specific listing — pulling title and tags only works for individual listing links right now."
+    )
+  }
+  const listingId = parseListingIdFromUrl(competitor.url)
+  if (!listingId) {
+    throw new RequestError(400, "Couldn't read a listing ID from this competitor's link.")
+  }
+
+  let listing
+  try {
+    listing = await fetchEtsyListing(env, listingId)
+  } catch (err) {
+    if (err.status === 404) {
+      throw new RequestError(
+        404,
+        "This listing couldn't be found on Etsy — it may be inactive, sold out, or removed."
+      )
+    }
+    throw err
+  }
+
+  updateCompetitorSnapshot(id, {
+    title: listing.title,
+    tagsJson: JSON.stringify(listing.tags),
+    thumbnailUrl: listing.images[0]?.url || null,
+  })
+
+  return getCompetitorById(id)
+}
+
+// POST /api/competitors/refresh, body { id }. Same x-app-password auth
+// as every other endpoint.
+function createCompetitorRefreshHandler(env, passwordsMatch) {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      const { id: rawId } = await readJsonBody(req)
+      const id = Number(rawId)
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new RequestError(400, 'A valid competitor id is required.')
+      }
+
+      await refreshOneCompetitor(env, id)
+      res.end(JSON.stringify({ ok: true, competitors: listCompetitors() }))
+    } catch (err) {
+      res.statusCode = err.status || 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
+export {
+  isEtsyCompetitorUrl,
+  createCompetitorsHandler,
+  refreshCompetitorData,
+  refreshOneCompetitor,
+  createCompetitorRefreshHandler,
+}
