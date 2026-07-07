@@ -54,6 +54,15 @@ async function updateEtsyListingInventory(env, listingId, { price, quantity }) {
   const accessToken = await getValidAccessToken(env)
   const current = await getEtsyListingInventory(env, listingId)
 
+  // Denylist rather than allowlist for offerings specifically: a real
+  // live test with an allowlist of {quantity, is_enabled, price} was
+  // rejected with "All offerings need readiness state" — a field not
+  // named as required in any research consulted while building this.
+  // Rather than guess every field Etsy's write side actually wants,
+  // this keeps everything the GET returned except the fields research
+  // explicitly says the PUT rejects (offering_id, is_deleted), only
+  // overriding quantity/price. property_values/products still use an
+  // allowlist since those fields WERE explicitly documented.
   const products = current.products.map((product) => ({
     sku: product.sku,
     property_values: (product.property_values || []).map((pv) => ({
@@ -62,11 +71,14 @@ async function updateEtsyListingInventory(env, listingId, { price, quantity }) {
       value_ids: pv.value_ids,
       values: pv.values,
     })),
-    offerings: product.offerings.map((offering) => ({
-      quantity: quantity ?? offering.quantity,
-      is_enabled: offering.is_enabled,
-      price: price ?? offering.price.amount / offering.price.divisor,
-    })),
+    offerings: product.offerings.map((offering) => {
+      const { offering_id: _offeringId, is_deleted: _isDeleted, price: oldPrice, ...rest } = offering
+      return {
+        ...rest,
+        quantity: quantity ?? offering.quantity,
+        price: price ?? oldPrice.amount / oldPrice.divisor,
+      }
+    }),
   }))
 
   const response = await fetch(`${ETSY_API_BASE}/listings/${listingId}/inventory`, {
