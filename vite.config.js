@@ -30,6 +30,7 @@ import {
   createEtsyCoachFlagsHandler,
   createQuarterComparisonHandler,
   createTopSellersHandler,
+  createBottomPerformersHandler,
 } from './server/etsyCoach.js'
 import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
 import { createWeeklyReportHandler } from './server/weeklyReport.js'
@@ -91,6 +92,10 @@ function etsyTitleWriterPlugin(env) {
         createQuarterComparisonHandler(env, passwordsMatch)
       )
       server.middlewares.use('/api/top-sellers', createTopSellersHandler(env, passwordsMatch))
+      server.middlewares.use(
+        '/api/bottom-performers',
+        createBottomPerformersHandler(env, passwordsMatch)
+      )
       server.middlewares.use('/api/app-settings', createAppSettingsHandler(env, passwordsMatch))
       server.middlewares.use('/api/run-nightly-sync', createRunNightlySyncHandler(env))
       server.middlewares.use(

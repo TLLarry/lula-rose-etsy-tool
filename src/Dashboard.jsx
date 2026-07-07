@@ -2,12 +2,9 @@ import { useEffect, useState } from 'react'
 import WeeklyReport from './WeeklyReport'
 
 // Placeholder-only layout for the rest of this page — no data wiring yet.
-// Real values (and the click-to-see-why interaction on the Bottom 3
-// list) come once the Etsy API key is active. Top 3 Performing Listings
-// is the one row wired to real data (see loadTopSellers below) — ranked
-// by units sold in the last 30 days via server/etsyCoach.js.
-const BOTTOM_PERFORMER_SLOTS = 3
-
+// Top 3 / Bottom 3 Performing Listings are both wired to real data (see
+// loadTopSellers/loadBottomPerformers below) — ranked by units sold in
+// the last 30 days via server/etsyCoach.js.
 function Dashboard({ password }) {
   const [topSellers, setTopSellers] = useState([])
   const [minUnitsThreshold, setMinUnitsThreshold] = useState(null)
@@ -17,6 +14,11 @@ function Dashboard({ password }) {
   const [thresholdInput, setThresholdInput] = useState('')
   const [savingThreshold, setSavingThreshold] = useState(false)
   const [thresholdError, setThresholdError] = useState('')
+
+  const [bottomPerformers, setBottomPerformers] = useState([])
+  const [bottomLoading, setBottomLoading] = useState(true)
+  const [bottomError, setBottomError] = useState('')
+  const [expandedBottomId, setExpandedBottomId] = useState(null)
 
   const loadTopSellers = () => {
     setLoading(true)
@@ -42,6 +44,28 @@ function Dashboard({ password }) {
     // explicitly via handleSaveThreshold instead of this re-running.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/bottom-performers', { headers: { 'x-app-password': password } })
+      .then(async (response) => {
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || 'Failed to load bottom performers.')
+        return body
+      })
+      .then((body) => {
+        if (!cancelled) setBottomPerformers(body.listings)
+      })
+      .catch((err) => {
+        if (!cancelled) setBottomError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setBottomLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [password])
 
   const handleSaveThreshold = async () => {
     const value = Number(thresholdInput)
@@ -178,15 +202,40 @@ function Dashboard({ password }) {
 
         <div className="dashboard-performers-box">
           <h2>Bottom 3 Performing Listings</h2>
-          <ul className="dashboard-performer-list">
-            {Array.from({ length: BOTTOM_PERFORMER_SLOTS }, (_, index) => (
-              <li key={index}>
-                <button type="button" className="dashboard-performer-button">
-                  Will appear here once data is connected.
-                </button>
-              </li>
-            ))}
-          </ul>
+          <p className="subhead">Ranked by units sold in the last 30 days. Click one for why.</p>
+
+          {bottomError && <p className="error">{bottomError}</p>}
+          {bottomLoading && <p className="subhead">Loading…</p>}
+
+          {!bottomLoading && !bottomError && bottomPerformers.length === 0 && (
+            <p className="subhead">
+              Nothing stands out as underperforming right now — nice work.
+            </p>
+          )}
+
+          {!bottomLoading && bottomPerformers.length > 0 && (
+            <ul className="dashboard-performer-list">
+              {bottomPerformers.map((listing) => (
+                <li key={listing.listingId}>
+                  <button
+                    type="button"
+                    className="dashboard-performer-button"
+                    onClick={() =>
+                      setExpandedBottomId((current) =>
+                        current === listing.listingId ? null : listing.listingId
+                      )
+                    }
+                  >
+                    {listing.title} — {listing.unitsSold30d} unit
+                    {listing.unitsSold30d === 1 ? '' : 's'} sold
+                  </button>
+                  {expandedBottomId === listing.listingId && (
+                    <p className="dashboard-performer-reason">{listing.reason}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 
