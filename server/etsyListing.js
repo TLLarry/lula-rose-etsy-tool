@@ -159,6 +159,16 @@ async function fetchEtsyListing(env, listingId) {
     // is the override path: a searchable picker for the rare case the
     // seller wants to change it before creating the draft.
     taxonomyId: typeof data.taxonomy_id === 'number' ? data.taxonomy_id : null,
+    // Discovered via a real createDraftListing test call, not docs —
+    // Etsy's own "shipping profiles are no longer required for listing
+    // drafts" changelog turned out not to hold for physical listings in
+    // practice: a real live attempt was rejected with "A
+    // shipping_profile_id is required for physical listings." Carried
+    // over from the original listing for the same reason as
+    // taxonomyId/quantity/price/who_made/when_made — a revamp doesn't
+    // change how the product actually ships.
+    shippingProfileId:
+      typeof data.shipping_profile_id === 'number' ? data.shipping_profile_id : null,
   }
 }
 

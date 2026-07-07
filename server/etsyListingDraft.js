@@ -9,6 +9,14 @@
 // an application/x-www-form-urlencoded body. Sending JSON here would
 // silently be ignored/misread, not cleanly rejected — this was
 // deliberately verified up front rather than discovered the hard way.
+//
+// shippingProfileId is required too, discovered via a real live test
+// call rather than docs: Etsy's own changelog says shipping profiles
+// are "no longer required for listing drafts," but a real attempt
+// without one was rejected with "A shipping_profile_id is required for
+// physical listings." Carried over from the original listing being
+// revamped, same as taxonomyId/quantity/price/who_made/when_made — a
+// revamp doesn't change how the product actually ships.
 import { getValidAccessToken } from './etsyOAuth.js'
 import { checkAppPassword } from './db.js'
 import { readJsonBody, RequestError } from './listingApi.js'
@@ -18,7 +26,8 @@ const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 const WHO_MADE_VALUES = ['i_did', 'someone_else', 'collective']
 
 function validateDraftListingInput(body) {
-  const { title, description, tags, quantity, price, whoMade, whenMade, taxonomyId } = body || {}
+  const { title, description, tags, quantity, price, whoMade, whenMade, taxonomyId, shippingProfileId } =
+    body || {}
 
   if (typeof title !== 'string' || !title.trim()) {
     throw new RequestError(400, 'A title is required to create a draft listing.')
@@ -44,6 +53,12 @@ function validateDraftListingInput(body) {
   if (!Number.isInteger(taxonomyId) || taxonomyId <= 0) {
     throw new RequestError(400, 'A valid taxonomy_id is required — pick a category first.')
   }
+  if (!Number.isInteger(shippingProfileId) || shippingProfileId <= 0) {
+    throw new RequestError(
+      400,
+      "A valid shipping profile is required — this listing's original shipping_profile_id should be carried over automatically."
+    )
+  }
 
   return {
     title: title.trim(),
@@ -54,6 +69,7 @@ function validateDraftListingInput(body) {
     whoMade,
     whenMade,
     taxonomyId,
+    shippingProfileId,
   }
 }
 
@@ -61,7 +77,17 @@ function validateDraftListingInput(body) {
 // comma-separated in a single field (confirmed via research, matching
 // how Etsy documents "materials" the same way) — form-urlencoded has no
 // native array syntax the way JSON does.
-function buildDraftListingBody({ title, description, tags, quantity, price, whoMade, whenMade, taxonomyId }) {
+function buildDraftListingBody({
+  title,
+  description,
+  tags,
+  quantity,
+  price,
+  whoMade,
+  whenMade,
+  taxonomyId,
+  shippingProfileId,
+}) {
   const params = new URLSearchParams()
   params.set('quantity', String(quantity))
   params.set('title', title)
@@ -70,6 +96,7 @@ function buildDraftListingBody({ title, description, tags, quantity, price, whoM
   params.set('who_made', whoMade)
   params.set('when_made', whenMade)
   params.set('taxonomy_id', String(taxonomyId))
+  params.set('shipping_profile_id', String(shippingProfileId))
   if (tags.length > 0) {
     params.set('tags', tags.join(','))
   }
@@ -128,8 +155,8 @@ async function createEtsyDraftListing(env, listingInput) {
 }
 
 // POST /api/create-draft-listing, body { title, description, tags,
-// quantity, price, whoMade, whenMade, taxonomyId }. Same x-app-password
-// auth as every other endpoint.
+// quantity, price, whoMade, whenMade, taxonomyId, shippingProfileId }.
+// Same x-app-password auth as every other endpoint.
 function createDraftListingHandler(env, passwordsMatch) {
   return async (req, res) => {
     if (req.method !== 'POST') {
