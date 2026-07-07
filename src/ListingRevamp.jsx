@@ -283,6 +283,17 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
           itemHeight: listing.itemHeight,
           itemWeightUnit: listing.itemWeightUnit,
           itemDimensionsUnit: listing.itemDimensionsUnit,
+          // Whatever's already been uploaded and alt-texted in the
+          // Listing Photos section below — same shape rewrite-listing
+          // already sends, plus altText. Uploaded to the new draft
+          // right after it's created; Etsy has no way to attach images
+          // at creation time itself.
+          images: photos.map((photo) => ({
+            mediaType: photo.mediaType,
+            data: photo.base64,
+            name: photo.name,
+            altText: photo.altText,
+          })),
         }),
       })
       const data = await response.json()
@@ -804,15 +815,41 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
 
                   {draftCreateError && <p className="error">{draftCreateError}</p>}
 
-                  {draftCreateResult && (
-                    <p className="draft-success">
-                      Draft created —{' '}
-                      <a href={draftCreateResult.url} target="_blank" rel="noreferrer">
-                        view it on Etsy
-                      </a>
-                      . It stays in draft state until you publish it yourself.
-                    </p>
-                  )}
+                  {draftCreateResult &&
+                    (() => {
+                      const imageUpload = draftCreateResult.imageUpload
+                      const succeeded = imageUpload?.results.filter((r) => r.ok).length ?? 0
+                      const failed = imageUpload?.results.filter((r) => !r.ok) ?? []
+
+                      return (
+                        <>
+                          <p className="draft-success">
+                            Draft created —{' '}
+                            <a href={draftCreateResult.url} target="_blank" rel="noreferrer">
+                              view it on Etsy
+                            </a>
+                            . It stays in draft state until you publish it yourself.
+                          </p>
+                          {imageUpload && (
+                            <p className="subhead">
+                              {succeeded} of {imageUpload.results.length} photo
+                              {imageUpload.results.length === 1 ? '' : 's'} uploaded.
+                              {imageUpload.skippedForCapacity > 0 &&
+                                ` Etsy allows 10 images per listing — ${imageUpload.skippedForCapacity} extra photo${imageUpload.skippedForCapacity === 1 ? ' was' : 's were'} not sent.`}
+                            </p>
+                          )}
+                          {failed.length > 0 && (
+                            <ul className="draft-image-errors">
+                              {failed.map((result, index) => (
+                                <li key={index} className="error">
+                                  {result.name}: {result.error}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </>
+                      )
+                    })()}
                 </div>
               </div>
             )

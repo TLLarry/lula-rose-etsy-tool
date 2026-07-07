@@ -128,7 +128,17 @@ function validateImages(rawImages) {
       typeof image.name === 'string' && image.name.trim()
         ? image.name.trim().slice(0, MAX_FILENAME_LENGTH)
         : `Image ${index + 1}`
-    return { mediaType: image.mediaType, data: image.data, name }
+    // altText passes through when present (server/etsyListingImages.js
+    // uses it; the rewrite endpoint that also calls this function
+    // doesn't send it, so it's simply undefined there) — kept paired
+    // with its image here rather than a separate same-index array, so
+    // the two can't drift apart.
+    return {
+      mediaType: image.mediaType,
+      data: image.data,
+      name,
+      ...(typeof image.altText === 'string' ? { altText: image.altText } : {}),
+    }
   })
 }
 

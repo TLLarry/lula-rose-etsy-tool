@@ -41,9 +41,17 @@
 // all-caps test title. Etsy's error surfaces clearly through this
 // file's existing error handling, so no special-casing was added here;
 // just worth knowing if a rewrite ever produces a shouty title.
+//
+// Images ride along in the same request but are uploaded via a
+// completely separate Etsy endpoint (server/etsyListingImages.js) once
+// the draft exists — Etsy's createDraftListing has no way to attach
+// images at creation time. A failed image upload never fails the whole
+// request; the draft is already real by that point, so this returns
+// per-image results instead.
 import { getValidAccessToken } from './etsyOAuth.js'
 import { checkAppPassword } from './db.js'
-import { readJsonBody, RequestError } from './listingApi.js'
+import { readJsonBody, RequestError, validateImages } from './listingApi.js'
+import { uploadEtsyListingImages } from './etsyListingImages.js'
 
 const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 
@@ -67,6 +75,7 @@ function validateDraftListingInput(body) {
     itemHeight,
     itemWeightUnit,
     itemDimensionsUnit,
+    images: rawImages,
   } = body || {}
 
   if (typeof title !== 'string' || !title.trim()) {
@@ -136,6 +145,11 @@ function validateDraftListingInput(body) {
     itemHeight: typeof itemHeight === 'number' ? itemHeight : null,
     itemWeightUnit: typeof itemWeightUnit === 'string' ? itemWeightUnit : null,
     itemDimensionsUnit: typeof itemDimensionsUnit === 'string' ? itemDimensionsUnit : null,
+    // Reuses the exact same validation the rewrite endpoint already
+    // applies to these same photos (count/type/size) — genuinely
+    // optional, since a draft with no photos yet is a normal, valid
+    // outcome, not an error.
+    images: validateImages(rawImages),
   }
 }
 
@@ -253,7 +267,8 @@ async function createEtsyDraftListing(env, listingInput) {
 
 // POST /api/create-draft-listing, body { title, description, tags,
 // quantity, price, whoMade, whenMade, taxonomyId, shippingProfileId,
-// readinessStateId }. Same x-app-password auth as every other endpoint.
+// readinessStateId, images? }. Same x-app-password auth as every other
+// endpoint.
 function createDraftListingHandler(env, passwordsMatch) {
   return async (req, res) => {
     if (req.method !== 'POST') {
@@ -268,7 +283,19 @@ function createDraftListingHandler(env, passwordsMatch) {
       const rawBody = await readJsonBody(req)
       const listingInput = validateDraftListingInput(rawBody)
       const result = await createEtsyDraftListing(env, listingInput)
-      res.end(JSON.stringify({ ok: true, ...result }))
+
+      // The draft is real at this point regardless of what happens
+      // next — a failed image upload is never treated as the whole
+      // request failing, since there's nothing to roll back to (and no
+      // delete scope to do it with even if there were). Per-image
+      // results ride along so the seller can see exactly which ones
+      // made it and retry just the ones that didn't.
+      let imageUpload = null
+      if (listingInput.images.length > 0) {
+        imageUpload = await uploadEtsyListingImages(env, result.listingId, listingInput.images)
+      }
+
+      res.end(JSON.stringify({ ok: true, ...result, imageUpload }))
     } catch (err) {
       res.statusCode = err.status || 500
       res.end(JSON.stringify({ error: err.message }))
