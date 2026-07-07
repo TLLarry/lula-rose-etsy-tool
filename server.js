@@ -23,6 +23,7 @@ import { createCalendarHandler } from './server/calendar.js'
 import { createSendTestEmailHandler } from './server/reminders.js'
 import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
 import { createLoadListingHandler } from './server/etsyListing.js'
+import { createDraftListingHandler } from './server/etsyListingDraft.js'
 import { createEtsyTaxonomyHandler } from './server/etsyTaxonomy.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
 import { createRewriteListingHandler } from './server/listingRevampRewrite.js'
@@ -105,6 +106,7 @@ app.use('/api/calendar', createCalendarHandler(env, passwordsMatch))
 app.use('/api/send-test-email', createSendTestEmailHandler(env, passwordsMatch))
 app.use('/api/run-reminder-check', createRunReminderCheckHandler(env))
 app.use('/api/load-listing', createLoadListingHandler(env, passwordsMatch))
+app.use('/api/create-draft-listing', createDraftListingHandler(env, passwordsMatch))
 app.use('/api/etsy-taxonomy', createEtsyTaxonomyHandler(env, passwordsMatch))
 app.use('/api/parse-listing-csv', createParseListingCsvHandler(env, passwordsMatch))
 app.use('/api/rewrite-listing', createRewriteListingHandler(env, passwordsMatch))
