@@ -177,6 +177,23 @@ async function fetchEtsyListing(env, listingId) {
     // listing, same reasoning as every other field here.
     readinessStateId:
       typeof data.readiness_state_id === 'number' ? data.readiness_state_id : null,
+    // Conditionally required, discovered via a real createDraftListing
+    // test call: a CALCULATED shipping profile (weight/dimension-based
+    // pricing — this listing's carried-over shippingProfileId turned
+    // out to be one) rejects the draft without these:
+    // "Could not set a calculated shipping profile to the listing. The
+    // listing is missing 'item_weight', 'item_length', 'item_width',
+    // 'item_height', 'item_weight_unit' or 'item_dimensions_unit'."
+    // Not made mandatory in the draft-creation validation, since a flat-
+    // rate shipping profile wouldn't need these — just carried over
+    // and included whenever present.
+    itemWeight: typeof data.item_weight === 'number' ? data.item_weight : null,
+    itemLength: typeof data.item_length === 'number' ? data.item_length : null,
+    itemWidth: typeof data.item_width === 'number' ? data.item_width : null,
+    itemHeight: typeof data.item_height === 'number' ? data.item_height : null,
+    itemWeightUnit: typeof data.item_weight_unit === 'string' ? data.item_weight_unit : null,
+    itemDimensionsUnit:
+      typeof data.item_dimensions_unit === 'string' ? data.item_dimensions_unit : null,
   }
 }
 

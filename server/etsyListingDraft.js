@@ -20,6 +20,13 @@
 // listing being revamped, same as taxonomyId/quantity/price/who_made/
 // when_made — a revamp doesn't change how the physical product actually
 // ships or its readiness state.
+//
+// itemWeight/Length/Width/Height/WeightUnit/DimensionsUnit are
+// CONDITIONALLY required, also discovered live: a CALCULATED shipping
+// profile (weight/dimension-based pricing) rejects the draft without
+// all six ("Could not set a calculated shipping profile to the
+// listing..."). Not hard-required here since a flat-rate shipping
+// profile wouldn't need them — passed through whenever present.
 import { getValidAccessToken } from './etsyOAuth.js'
 import { checkAppPassword } from './db.js'
 import { readJsonBody, RequestError } from './listingApi.js'
@@ -40,6 +47,12 @@ function validateDraftListingInput(body) {
     taxonomyId,
     shippingProfileId,
     readinessStateId,
+    itemWeight,
+    itemLength,
+    itemWidth,
+    itemHeight,
+    itemWeightUnit,
+    itemDimensionsUnit,
   } = body || {}
 
   if (typeof title !== 'string' || !title.trim()) {
@@ -78,6 +91,19 @@ function validateDraftListingInput(body) {
       "A valid readiness state is required — this listing's original readiness_state_id should be carried over automatically."
     )
   }
+  // Optional — only required by CALCULATED shipping profiles, not
+  // universally — but if any dimension field is present, validate it
+  // rather than silently sending a garbage value to Etsy.
+  for (const [name, value] of [
+    ['itemWeight', itemWeight],
+    ['itemLength', itemLength],
+    ['itemWidth', itemWidth],
+    ['itemHeight', itemHeight],
+  ]) {
+    if (value !== undefined && value !== null && (typeof value !== 'number' || value <= 0)) {
+      throw new RequestError(400, `${name} must be a positive number if provided.`)
+    }
+  }
 
   return {
     title: title.trim(),
@@ -90,6 +116,12 @@ function validateDraftListingInput(body) {
     taxonomyId,
     shippingProfileId,
     readinessStateId,
+    itemWeight: typeof itemWeight === 'number' ? itemWeight : null,
+    itemLength: typeof itemLength === 'number' ? itemLength : null,
+    itemWidth: typeof itemWidth === 'number' ? itemWidth : null,
+    itemHeight: typeof itemHeight === 'number' ? itemHeight : null,
+    itemWeightUnit: typeof itemWeightUnit === 'string' ? itemWeightUnit : null,
+    itemDimensionsUnit: typeof itemDimensionsUnit === 'string' ? itemDimensionsUnit : null,
   }
 }
 
@@ -108,6 +140,12 @@ function buildDraftListingBody({
   taxonomyId,
   shippingProfileId,
   readinessStateId,
+  itemWeight,
+  itemLength,
+  itemWidth,
+  itemHeight,
+  itemWeightUnit,
+  itemDimensionsUnit,
 }) {
   const params = new URLSearchParams()
   params.set('quantity', String(quantity))
@@ -122,6 +160,14 @@ function buildDraftListingBody({
   if (tags.length > 0) {
     params.set('tags', tags.join(','))
   }
+  // Only sent when present — required by a CALCULATED shipping profile,
+  // irrelevant to a flat-rate one.
+  if (itemWeight != null) params.set('item_weight', String(itemWeight))
+  if (itemLength != null) params.set('item_length', String(itemLength))
+  if (itemWidth != null) params.set('item_width', String(itemWidth))
+  if (itemHeight != null) params.set('item_height', String(itemHeight))
+  if (itemWeightUnit) params.set('item_weight_unit', itemWeightUnit)
+  if (itemDimensionsUnit) params.set('item_dimensions_unit', itemDimensionsUnit)
   return params
 }
 
