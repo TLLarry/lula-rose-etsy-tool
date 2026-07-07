@@ -169,6 +169,14 @@ async function fetchEtsyListing(env, listingId) {
     // change how the product actually ships.
     shippingProfileId:
       typeof data.shipping_profile_id === 'number' ? data.shipping_profile_id : null,
+    // Also discovered via a real createDraftListing test call: after
+    // adding shipping_profile_id, Etsy rejected the next attempt with
+    // "A readiness_state_id is required for physical listings" — a
+    // field not mentioned as strictly required anywhere in the docs
+    // consulted before building this. Carried over from the original
+    // listing, same reasoning as every other field here.
+    readinessStateId:
+      typeof data.readiness_state_id === 'number' ? data.readiness_state_id : null,
   }
 }
 
