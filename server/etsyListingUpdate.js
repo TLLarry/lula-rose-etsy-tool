@@ -10,10 +10,18 @@
 // confirmation, separate from the Draft button.
 //
 // Needs OAuth (listings_w), same as createDraftListing.
+//
+// price/quantity are NOT sent through this PATCH — confirmed via a real
+// live test that Etsy silently accepts them here (no error) without
+// actually changing either one. They live in a separate Inventory
+// system on Etsy's side and need their own fetch-transform-write cycle
+// (server/etsyListingInventory.js) — a second Etsy call this handler
+// makes alongside this one, not a quirk of this endpoint's body format.
 import { getValidAccessToken } from './etsyOAuth.js'
 import { checkAppPassword } from './db.js'
 import { readJsonBody, RequestError, validateImages } from './listingApi.js'
 import { uploadEtsyListingImages } from './etsyListingImages.js'
+import { updateEtsyListingInventory } from './etsyListingInventory.js'
 
 const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 const WHO_MADE_VALUES = ['i_did', 'someone_else', 'collective']
@@ -82,13 +90,13 @@ function validateListingUpdateInput(body) {
   return { listingId, updates, images: validateImages(body?.images) }
 }
 
-function buildListingUpdateBody({ title, description, tags, quantity, price, whoMade, taxonomyId }) {
+// price/quantity are deliberately absent here — see the header comment
+// on why they don't belong in this endpoint's body at all.
+function buildListingUpdateBody({ title, description, tags, whoMade, taxonomyId }) {
   const params = new URLSearchParams()
   if (title !== undefined) params.set('title', title)
   if (description !== undefined) params.set('description', description)
   if (tags !== undefined && tags.length > 0) params.set('tags', tags.join(','))
-  if (quantity !== undefined) params.set('quantity', String(quantity))
-  if (price !== undefined) params.set('price', String(price))
   if (whoMade !== undefined) params.set('who_made', whoMade)
   if (taxonomyId !== undefined) params.set('taxonomy_id', String(taxonomyId))
   return params
@@ -124,7 +132,13 @@ async function updateEtsyListing(env, listingId, updates) {
     state: data.state,
     url: typeof data.url === 'string' ? data.url : null,
     title: data.title,
-    price: data.price,
+    // No price here — confirmed via a live test that this PATCH's own
+    // response reflects the price from BEFORE any inventory update runs
+    // (since price genuinely isn't part of this endpoint), so surfacing
+    // it here would show a stale, misleading value whenever price was
+    // part of the update. The `inventory` field on the handler's
+    // response is the actual source of truth for whether price/quantity
+    // changed.
   }
 }
 
@@ -147,12 +161,30 @@ function updateListingHandler(env, passwordsMatch) {
       const { listingId, updates, images } = validateListingUpdateInput(rawBody)
       const result = await updateEtsyListing(env, listingId, updates)
 
+      // A second, genuinely separate Etsy call — see the header comment
+      // on why price/quantity can't ride along in updateEtsyListing's
+      // own PATCH. Runs after the listing-fields update succeeds, same
+      // "the main update already happened, don't lose that if this part
+      // fails" reasoning as the image upload below.
+      let inventory = null
+      if (updates.price !== undefined || updates.quantity !== undefined) {
+        try {
+          await updateEtsyListingInventory(env, listingId, {
+            price: updates.price,
+            quantity: updates.quantity,
+          })
+          inventory = { ok: true }
+        } catch (err) {
+          inventory = { ok: false, error: err.message }
+        }
+      }
+
       let imageUpload = null
       if (images.length > 0) {
         imageUpload = await uploadEtsyListingImages(env, listingId, images)
       }
 
-      res.end(JSON.stringify({ ok: true, ...result, imageUpload }))
+      res.end(JSON.stringify({ ok: true, ...result, inventory, imageUpload }))
     } catch (err) {
       res.statusCode = err.status || 500
       res.end(JSON.stringify({ error: err.message }))
