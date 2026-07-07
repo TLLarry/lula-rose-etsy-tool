@@ -759,6 +759,21 @@ mark {
   }
 }
 
+.draft-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Distinguishes the higher-risk action (overwrites a listing that may
+   already be live) from Draft (always safe, always a new listing) —
+   same idea as a destructive-action button elsewhere, without being
+   quite that alarming since this isn't literally destructive. */
+.update-listing-button {
+  background: #fff3e0;
+  border-color: #e0a458;
+}
+
 .summary-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

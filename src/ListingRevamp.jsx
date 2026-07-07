@@ -80,6 +80,9 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   const [creatingDraft, setCreatingDraft] = useState(false)
   const [draftCreateResult, setDraftCreateResult] = useState(null)
   const [draftCreateError, setDraftCreateError] = useState('')
+  const [updatingListing, setUpdatingListing] = useState(false)
+  const [updateListingResult, setUpdateListingResult] = useState(null)
+  const [updateListingError, setUpdateListingError] = useState('')
 
   const [photos, setPhotos] = useState([])
   const [photoError, setPhotoError] = useState('')
@@ -303,6 +306,53 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       setDraftCreateError(err.message)
     } finally {
       setCreatingDraft(false)
+    }
+  }
+
+  // Genuinely higher-risk than Draft: this overwrites the LOADED
+  // listing directly, which might be active and publicly visible with
+  // real sales history and reviews — unlike Draft, there's no "just
+  // discard it" undo. Gated behind its own native confirm() dialog
+  // (distinct from the Draft button, which needs none) so a stray click
+  // can't silently rewrite a live listing.
+  const handleUpdateListing = async () => {
+    if (!listing) return
+    const confirmed = window.confirm(
+      `This will directly overwrite listing #${listing.listingId} (currently ${listing.state}) with the content above. This cannot be undone from within this app. Continue?`
+    )
+    if (!confirmed) return
+
+    setUpdatingListing(true)
+    setUpdateListingError('')
+    setUpdateListingResult(null)
+    try {
+      const response = await fetch('/api/update-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({
+          listingId: listing.listingId,
+          title: draftTitle,
+          description: `${draftHeader} ${draftBody}`,
+          tags: draftTags,
+          quantity: Number(draftQuantity),
+          price: Number(draftPrice),
+          whoMade: draftWhoMade,
+          taxonomyId: draftTaxonomyId,
+          images: photos.map((photo) => ({
+            mediaType: photo.mediaType,
+            data: photo.base64,
+            name: photo.name,
+            altText: photo.altText,
+          })),
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to update this listing.')
+      setUpdateListingResult(data)
+    } catch (err) {
+      setUpdateListingError(err.message)
+    } finally {
+      setUpdatingListing(false)
     }
   }
 
@@ -738,9 +788,12 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                 <div className="result-section">
                   <h2>Push to Etsy</h2>
                   <p className="subhead">
-                    Creates a new DRAFT listing in your shop with the content above — it won't be
-                    visible to buyers until you publish it yourself from Etsy. Quantity and price
-                    carry over from the listing you loaded; change the category below if the
+                    Draft creates a new, separate DRAFT listing with the content above — it won't
+                    be visible to buyers until you publish it yourself, and the listing you loaded
+                    is left untouched. Update Existing Listing instead overwrites listing #
+                    {listing.listingId} directly (its title/tags/description/quantity/price/category/photos)
+                    {' '}— including if it's currently active and publicly visible. Quantity and
+                    price carry over from the listing you loaded; change the category below if the
                     revamp calls for it.
                   </p>
 
@@ -797,21 +850,39 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                     }}
                   />
 
-                  <button
-                    type="button"
-                    className="revamp-button"
-                    onClick={handleCreateDraft}
-                    disabled={
-                      creatingDraft ||
-                      !draftTitle.trim() ||
-                      draftTags.length === 0 ||
-                      !draftQuantity ||
-                      !draftPrice ||
-                      !draftTaxonomyId
-                    }
-                  >
-                    {creatingDraft ? 'Creating Draft…' : 'Draft'}
-                  </button>
+                  <div className="draft-actions">
+                    <button
+                      type="button"
+                      className="revamp-button"
+                      onClick={handleCreateDraft}
+                      disabled={
+                        creatingDraft ||
+                        !draftTitle.trim() ||
+                        draftTags.length === 0 ||
+                        !draftQuantity ||
+                        !draftPrice ||
+                        !draftTaxonomyId
+                      }
+                    >
+                      {creatingDraft ? 'Creating Draft…' : 'Draft'}
+                    </button>
+
+                    <button
+                      type="button"
+                      className="revamp-button update-listing-button"
+                      onClick={handleUpdateListing}
+                      disabled={
+                        updatingListing ||
+                        !draftTitle.trim() ||
+                        draftTags.length === 0 ||
+                        !draftQuantity ||
+                        !draftPrice ||
+                        !draftTaxonomyId
+                      }
+                    >
+                      {updatingListing ? 'Updating…' : 'Update Existing Listing'}
+                    </button>
+                  </div>
 
                   {draftCreateError && <p className="error">{draftCreateError}</p>}
 
@@ -830,6 +901,51 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                             </a>
                             . It stays in draft state until you publish it yourself.
                           </p>
+                          {imageUpload && (
+                            <p className="subhead">
+                              {succeeded} of {imageUpload.results.length} photo
+                              {imageUpload.results.length === 1 ? '' : 's'} uploaded.
+                              {imageUpload.skippedForCapacity > 0 &&
+                                ` Etsy allows 10 images per listing — ${imageUpload.skippedForCapacity} extra photo${imageUpload.skippedForCapacity === 1 ? ' was' : 's were'} not sent.`}
+                            </p>
+                          )}
+                          {failed.length > 0 && (
+                            <ul className="draft-image-errors">
+                              {failed.map((result, index) => (
+                                <li key={index} className="error">
+                                  {result.name}: {result.error}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </>
+                      )
+                    })()}
+
+                  {updateListingError && <p className="error">{updateListingError}</p>}
+
+                  {updateListingResult &&
+                    (() => {
+                      const imageUpload = updateListingResult.imageUpload
+                      const succeeded = imageUpload?.results.filter((r) => r.ok).length ?? 0
+                      const failed = imageUpload?.results.filter((r) => !r.ok) ?? []
+                      const inventory = updateListingResult.inventory
+
+                      return (
+                        <>
+                          <p className="draft-success">
+                            Listing updated —{' '}
+                            <a href={updateListingResult.url} target="_blank" rel="noreferrer">
+                              view it on Etsy
+                            </a>
+                            .
+                          </p>
+                          {inventory && !inventory.ok && (
+                            <p className="error">
+                              Title/tags/description/category updated, but quantity/price did not:{' '}
+                              {inventory.error}
+                            </p>
+                          )}
                           {imageUpload && (
                             <p className="subhead">
                               {succeeded} of {imageUpload.results.length} photo
