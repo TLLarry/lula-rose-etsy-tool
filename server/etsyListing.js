@@ -61,6 +61,19 @@ function normalizeImages(rawImages) {
     .filter((image) => image.url)
 }
 
+// Etsy returns price as a Money object on read — {amount, divisor,
+// currency_code}, e.g. {800, 100, "USD"} for $8.00 (confirmed via a live
+// call). Normalized to a plain decimal here for display/editing; the
+// currency code is kept separately (see priceCurrencyCode below) rather
+// than folded back into this number.
+function normalizePrice(rawPrice) {
+  if (!rawPrice || typeof rawPrice.amount !== 'number' || typeof rawPrice.divisor !== 'number') {
+    return null
+  }
+  if (rawPrice.divisor === 0) return null
+  return rawPrice.amount / rawPrice.divisor
+}
+
 // A pasted link in "Your Etsy Listing Link" is supposed to be one of the
 // seller's own listings (as opposed to the separate "Competitor's Listing
 // Link" field) — this catches the easy mistake of pasting the wrong kind
@@ -120,6 +133,25 @@ async function fetchEtsyListing(env, listingId) {
       typeof data.original_creation_timestamp === 'number'
         ? data.original_creation_timestamp
         : null,
+    // Needed to seed a new draft listing when pushing a revamp (Listing
+    // Revamp's planned "Draft" button) — Etsy requires all four of these
+    // on createDraftListing. Confirmed via a live call against a real
+    // listing (not just docs): quantity is a plain integer; price comes
+    // back as a Money object ({amount, divisor, currency_code}, e.g.
+    // {800, 100, "USD"} for $8.00) on READ, normalized here to a plain
+    // decimal for display/editing — whether the WRITE endpoint expects
+    // that same Money shape or a plain decimal is still unverified, to
+    // be confirmed when the actual draft-creation call gets built;
+    // who_made/when_made are Etsy's own enum strings (e.g.
+    // "someone_else", "2020_2026"), passed through unchanged since a
+    // future draft-creation call needs these exact values, not a
+    // human-readable transformation of them.
+    quantity: typeof data.quantity === 'number' ? data.quantity : null,
+    price: normalizePrice(data.price),
+    priceCurrencyCode:
+      data.price && typeof data.price.currency_code === 'string' ? data.price.currency_code : null,
+    whoMade: typeof data.who_made === 'string' ? data.who_made : null,
+    whenMade: typeof data.when_made === 'string' ? data.when_made : null,
   }
 }
 
