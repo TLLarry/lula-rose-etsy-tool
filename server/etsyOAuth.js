@@ -1,11 +1,18 @@
 // Etsy OAuth 2.0 (PKCE) — needed ONLY for shop-owner-private data:
 // listing the shop's own listings (GET /shops/{shop_id}/listings, scope
-// listings_r) and shop receipts/transactions for real orders (GET
-// /shops/{shop_id}/receipts, scope transactions_r). Both confirmed via a
-// live authenticated test call against this app's real Etsy credentials
-// (see server/etsyListing.js) — each returned
-// "Access token is required for this request (requires scope: ...)"
-// rather than a 404, confirming the exact endpoint paths and scope names.
+// listings_r), shop receipts/transactions for real orders (GET
+// /shops/{shop_id}/receipts, scope transactions_r), and creating/
+// updating the shop's own listings (POST/PATCH .../listings, scope
+// listings_w — for the Listing Revamp "push as draft" feature). The
+// first two are confirmed via a live authenticated test call against
+// this app's real Etsy credentials (see server/etsyListing.js) — each
+// returned "Access token is required for this request (requires scope:
+// ...)" rather than a 404, confirming the exact endpoint paths and scope
+// names. listings_w is per Etsy's documentation only so far — NOT yet
+// verified against a live authenticated call (there was nothing to call
+// it with until this scope was added) — verify the actual
+// createDraftListing/updateListing request/response shapes for real
+// before trusting them, same as everything else in this file.
 //
 // Verified directly against Etsy's live developer docs and a real API
 // call (also confirmed live): individual listing details — including
@@ -34,10 +41,19 @@ const AUTHORIZE_URL = 'https://www.etsy.com/oauth/connect'
 const TOKEN_URL = 'https://api.etsy.com/v3/public/oauth/token'
 // listings_r: read the shop's own listing list (creation dates, for the
 // 30-day new-listing review). transactions_r: read shop receipts (real
-// units sold / revenue). Neither scope is needed for public listing
-// details (title/tags/images/views/favorites) — that's the existing
-// API-key-only fetchEtsyListing path.
-const OAUTH_SCOPES = 'listings_r transactions_r'
+// units sold / revenue). listings_w: create/update the shop's own
+// listings (Listing Revamp's "push as draft" button). Neither _r scope
+// is needed for public listing details (title/tags/images/views/
+// favorites) — that's the existing API-key-only fetchEtsyListing path.
+//
+// Changing this string requires reconnecting Etsy — an existing access
+// token keeps whatever scope was granted when the seller clicked Allow;
+// Etsy has no way to silently upgrade a live token's scope. Visit
+// /api/etsy-oauth/start again (same URL as the first connection) and
+// grant access again; the new token overwrites the old one in
+// etsy_oauth_tokens (upserted at the fixed id=1 row), so there's no
+// separate "disconnect" step needed first.
+const OAUTH_SCOPES = 'listings_r listings_w transactions_r'
 
 function base64UrlEncode(buffer) {
   return buffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
