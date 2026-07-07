@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
-// Step 1 of the Keyword Bank feature: scan-and-preview only. No save
-// button here on purpose — the user asked to see what a categorized
-// keyword bank would actually look like before anything gets persisted
-// or wired into Listing Revamp. Storage and the Revamp integration are
-// separate, later steps.
-function CategoryCard({ category }) {
+// Step 1 preview card — one per category found by a fresh scan, with a
+// checkbox so the seller can choose exactly which categories to commit
+// to storage right now (e.g. saving the balloon/party-decor categories
+// while leaving a smaller, unrelated category like Food Coloring for
+// later, without needing a second scan to do it).
+function ScanCategoryCard({ category, selected, onToggle }) {
   const [showAllListings, setShowAllListings] = useState(false)
   const LISTING_PREVIEW_COUNT = 5
   const visibleListings = showAllListings
@@ -14,7 +14,10 @@ function CategoryCard({ category }) {
 
   return (
     <div className="keyword-bank-category">
-      <h2>{category.categoryPath}</h2>
+      <label className="keyword-bank-category-select">
+        <input type="checkbox" checked={selected} onChange={() => onToggle(category.taxonomyId)} />
+        <h2>{category.categoryPath}</h2>
+      </label>
       <p className="subhead">
         {category.listingCount} listing{category.listingCount === 1 ? '' : 's'} · {category.keywords.length}{' '}
         distinct keyword{category.keywords.length === 1 ? '' : 's'}
@@ -52,9 +55,7 @@ function CategoryCard({ category }) {
             className="competitor-change-link"
             onClick={() => setShowAllListings((prev) => !prev)}
           >
-            {showAllListings
-              ? 'Show fewer'
-              : `Show all ${category.listings.length} listings`}
+            {showAllListings ? 'Show fewer' : `Show all ${category.listings.length} listings`}
           </button>
         )}
       </details>
@@ -62,15 +63,114 @@ function CategoryCard({ category }) {
   )
 }
 
+// Step 2 persisted-state card — one per SAVED category, with manual
+// add/remove controls (the "edited/added to manually later" half of
+// the original request). Separate from ScanCategoryCard above since the
+// two show genuinely different things: a live scan preview with a
+// save-selection checkbox vs. the bank's actual current stored state
+// with edit controls.
+function SavedCategoryCard({ category, onAddKeyword, onRemoveKeyword }) {
+  const [newKeyword, setNewKeyword] = useState('')
+  const [adding, setAdding] = useState(false)
+
+  const handleAdd = async () => {
+    if (!newKeyword.trim()) return
+    setAdding(true)
+    await onAddKeyword(category.id, newKeyword.trim())
+    setNewKeyword('')
+    setAdding(false)
+  }
+
+  return (
+    <div className="keyword-bank-category">
+      <h2>{category.categoryPath}</h2>
+      <p className="subhead">
+        {category.keywords.length} keyword{category.keywords.length === 1 ? '' : 's'} saved
+      </p>
+
+      <ol className="keyword-bank-keywords">
+        {category.keywords.map((entry) => (
+          <li key={entry.id}>
+            <span className="tag-text">
+              {entry.keyword}
+              {entry.source === 'manual' && <span className="char-count small"> (manual)</span>}
+            </span>
+            <span className="char-count small">
+              {entry.listingCount} listing{entry.listingCount === 1 ? '' : 's'}
+            </span>
+            <button
+              type="button"
+              className="tag-remove-link"
+              onClick={() => onRemoveKeyword(entry.id)}
+              aria-label={`Remove ${entry.keyword}`}
+            >
+              ×
+            </button>
+          </li>
+        ))}
+        {category.keywords.length === 0 && (
+          <li className="subhead">No keywords saved in this category yet.</li>
+        )}
+      </ol>
+
+      <div className="field keyword-bank-add-keyword">
+        <input
+          type="text"
+          value={newKeyword}
+          onChange={(event) => setNewKeyword(event.target.value)}
+          placeholder="Add a keyword…"
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') handleAdd()
+          }}
+        />
+        <button type="button" className="revamp-button" onClick={handleAdd} disabled={adding}>
+          Add
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function KeywordBank({ password }) {
   const [scanning, setScanning] = useState(false)
-  const [result, setResult] = useState(null)
-  const [error, setError] = useState('')
+  const [scanResult, setScanResult] = useState(null)
+  const [scanError, setScanError] = useState('')
+  const [selectedTaxonomyIds, setSelectedTaxonomyIds] = useState(new Set())
+
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [saveSuccess, setSaveSuccess] = useState('')
+
+  const [savedCategories, setSavedCategories] = useState([])
+  const [loadingSaved, setLoadingSaved] = useState(true)
+  const [savedError, setSavedError] = useState('')
+
+  const loadSavedBank = () => {
+    setLoadingSaved(true)
+    setSavedError('')
+    return fetch('/api/keyword-bank', { headers: { 'x-app-password': password } })
+      .then(async (response) => {
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || 'Failed to load the saved keyword bank.')
+        setSavedCategories(body.categories)
+      })
+      .catch((err) => setSavedError(err.message))
+      .finally(() => setLoadingSaved(false))
+  }
+
+  useEffect(() => {
+    loadSavedBank()
+    // Only run once on mount — handleSave() explicitly reloads after a
+    // successful save, so this doesn't need password as a dependency
+    // trigger for re-fetching on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleScan = async () => {
     setScanning(true)
-    setError('')
-    setResult(null)
+    setScanError('')
+    setScanResult(null)
+    setSaveSuccess('')
     try {
       const response = await fetch('/api/keyword-bank-scan', {
         method: 'POST',
@@ -78,11 +178,92 @@ function KeywordBank({ password }) {
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Failed to scan your listings.')
-      setResult(data)
+      setScanResult(data)
+      // Every category starts selected — the seller unchecks whatever
+      // they want to defer (e.g. a smaller, unrelated category) rather
+      // than opting each one in individually.
+      setSelectedTaxonomyIds(new Set(data.categories.map((category) => category.taxonomyId)))
     } catch (err) {
-      setError(err.message)
+      setScanError(err.message)
     } finally {
       setScanning(false)
+    }
+  }
+
+  const toggleCategorySelected = (taxonomyId) => {
+    setSelectedTaxonomyIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(taxonomyId)) next.delete(taxonomyId)
+      else next.add(taxonomyId)
+      return next
+    })
+  }
+
+  const handleSaveSelected = async () => {
+    if (!scanResult) return
+    const toSave = scanResult.categories.filter((category) =>
+      selectedTaxonomyIds.has(category.taxonomyId)
+    )
+    if (toSave.length === 0) return
+
+    setSaving(true)
+    setSaveError('')
+    setSaveSuccess('')
+    try {
+      const response = await fetch('/api/keyword-bank', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({
+          categories: toSave.map((category) => ({
+            taxonomyId: category.taxonomyId,
+            categoryPath: category.categoryPath,
+            keywords: category.keywords.map((entry) => ({
+              keyword: entry.keyword,
+              listingCount: entry.listingCount,
+            })),
+          })),
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to save the keyword bank.')
+      setSavedCategories(data.categories)
+      setSaveSuccess(
+        `Saved ${toSave.length} categor${toSave.length === 1 ? 'y' : 'ies'} to the keyword bank.`
+      )
+    } catch (err) {
+      setSaveError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleAddKeyword = async (categoryId, keyword) => {
+    try {
+      const response = await fetch('/api/keyword-bank/keyword', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({ categoryId, keyword }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to add that keyword.')
+      setSavedCategories(data.categories)
+    } catch (err) {
+      setSavedError(err.message)
+    }
+  }
+
+  const handleRemoveKeyword = async (keywordId) => {
+    try {
+      const response = await fetch('/api/keyword-bank/keyword', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({ keywordId }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to remove that keyword.')
+      setSavedCategories(data.categories)
+    } catch (err) {
+      setSavedError(err.message)
     }
   }
 
@@ -91,8 +272,10 @@ function KeywordBank({ password }) {
       <h1>Keyword Bank</h1>
       <p className="subhead">
         Scans every active listing in your shop and groups their tags by category — one bucket
-        per actual Etsy category found, built from what's really in your shop rather than an
-        assumed list. This step only previews the result; nothing is saved yet.
+        per actual Etsy category found, kept exactly as separate as Etsy's own taxonomy (e.g.
+        Balloons and Backdrops &amp; Props stay distinct even though both fall under the broader
+        Party Decor). Review the scan below, pick which categories to save, then build on them
+        manually any time afterward.
       </p>
 
       <button type="button" className="revamp-button" onClick={handleScan} disabled={scanning}>
@@ -105,33 +288,54 @@ function KeywordBank({ password }) {
         </p>
       )}
 
-      {error && <p className="error">{error}</p>}
+      {scanError && <p className="error">{scanError}</p>}
 
-      {result && (
+      {scanResult && (
         <>
           <p className="subhead">
-            Scanned {result.totalListingsScanned} listing
-            {result.totalListingsScanned === 1 ? '' : 's'} into {result.categories.length} categor
-            {result.categories.length === 1 ? 'y' : 'ies'} — preview only, nothing saved yet.
+            Scanned {scanResult.totalListingsScanned} listing
+            {scanResult.totalListingsScanned === 1 ? '' : 's'} into {scanResult.categories.length} categor
+            {scanResult.categories.length === 1 ? 'y' : 'ies'}. Uncheck any category you want to
+            leave out for now — nothing is saved until you click Save below.
           </p>
 
-          {result.categories.length === 0 && (
+          {scanResult.categories.length === 0 && (
             <p className="subhead">No active, categorized listings were found.</p>
           )}
 
-          {result.categories.map((category) => (
-            <CategoryCard category={category} key={category.taxonomyId} />
+          {scanResult.categories.map((category) => (
+            <ScanCategoryCard
+              category={category}
+              key={category.taxonomyId}
+              selected={selectedTaxonomyIds.has(category.taxonomyId)}
+              onToggle={toggleCategorySelected}
+            />
           ))}
 
-          {result.uncategorized.length > 0 && (
+          {scanResult.categories.length > 0 && (
+            <button
+              type="button"
+              className="revamp-button"
+              onClick={handleSaveSelected}
+              disabled={saving || selectedTaxonomyIds.size === 0}
+            >
+              {saving
+                ? 'Saving…'
+                : `Save ${selectedTaxonomyIds.size} Selected Categor${selectedTaxonomyIds.size === 1 ? 'y' : 'ies'} to Keyword Bank`}
+            </button>
+          )}
+          {saveError && <p className="error">{saveError}</p>}
+          {saveSuccess && <p className="draft-success">{saveSuccess}</p>}
+
+          {scanResult.uncategorized.length > 0 && (
             <div className="keyword-bank-category">
-              <h2>Uncategorized ({result.uncategorized.length})</h2>
+              <h2>Uncategorized ({scanResult.uncategorized.length})</h2>
               <p className="subhead">
                 These listings have no taxonomy category set on Etsy, so they couldn't be
-                grouped.
+                grouped or saved.
               </p>
               <ul>
-                {result.uncategorized.map((listing) => (
+                {scanResult.uncategorized.map((listing) => (
                   <li key={listing.listingId}>
                     <a
                       href={`https://www.etsy.com/listing/${listing.listingId}`}
@@ -147,6 +351,27 @@ function KeywordBank({ password }) {
           )}
         </>
       )}
+
+      <h2 className="keyword-bank-saved-heading">Saved Keyword Bank</h2>
+      <p className="subhead">
+        What's actually persisted right now — edit it here any time, independent of scanning.
+      </p>
+
+      {loadingSaved && <p className="subhead">Loading…</p>}
+      {savedError && <p className="error">{savedError}</p>}
+
+      {!loadingSaved && savedCategories.length === 0 && (
+        <p className="subhead">Nothing saved yet — scan and save a category above to start.</p>
+      )}
+
+      {savedCategories.map((category) => (
+        <SavedCategoryCard
+          category={category}
+          key={category.id}
+          onAddKeyword={handleAddKeyword}
+          onRemoveKeyword={handleRemoveKeyword}
+        />
+      ))}
     </section>
   )
 }

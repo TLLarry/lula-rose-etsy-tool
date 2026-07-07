@@ -49,6 +49,7 @@ import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './serv
 import { createWeeklyReportHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
+import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
 // real environment variables set in the dashboard, so there's no .env file
@@ -137,6 +138,10 @@ app.use('/api/nightly-sync-log', createNightlySyncLogHandler(env, passwordsMatch
 app.use('/api/weekly-report', createWeeklyReportHandler(env, passwordsMatch))
 app.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))
 app.use('/api/keyword-bank-scan', createKeywordBankScanHandler(env, passwordsMatch))
+// Must be registered before '/api/keyword-bank' — app.use matches by
+// path prefix, so the more specific route needs to come first.
+app.use('/api/keyword-bank/keyword', createKeywordBankKeywordHandler(env, passwordsMatch))
+app.use('/api/keyword-bank', createKeywordBankHandler(env, passwordsMatch))
 
 app.use(express.static(distDir))
 

@@ -1681,3 +1681,31 @@ mark {
   margin-bottom: 4px;
 }
 
+.keyword-bank-category-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+
+  h2 {
+    margin: 0;
+  }
+}
+
+.keyword-bank-add-keyword {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+
+  input {
+    flex: 1;
+  }
+}
+
+.keyword-bank-saved-heading {
+  margin-top: 16px;
+  text-align: left;
+}
+

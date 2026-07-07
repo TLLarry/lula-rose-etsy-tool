@@ -85,6 +85,8 @@ const TABLE_NAMES = [
   'etsy_coach_flags',
   'nightly_sync_log',
   'app_settings',
+  'keyword_bank_categories',
+  'keyword_bank_keywords',
 ]
 
 // Safe to call on every boot — CREATE TABLE/INDEX IF NOT EXISTS is a no-op
@@ -332,6 +334,41 @@ function initializeSchema(realDbInstance) {
     week_end TEXT NOT NULL,
     report_json TEXT NOT NULL
   );
+
+  -- One row per Etsy taxonomy category actually found in the shop
+  -- (server/keywordBankScan.js) and confirmed by the seller for saving
+  -- — categories are kept exactly as separate as Etsy's own taxonomy
+  -- says (e.g. "Balloons" and "Backdrops & Props" stay distinct rows
+  -- even though both roll up under the same parent "Party Decor"),
+  -- deliberately not merged, per an explicit request.
+  CREATE TABLE IF NOT EXISTS keyword_bank_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    taxonomy_id INTEGER NOT NULL UNIQUE,
+    category_path TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- keyword COLLATE NOCASE so "Balloon" and "balloon" can't both get
+  -- saved as separate rows within the same category — same
+  -- case-insensitive-but-original-casing-displayed approach
+  -- keywordBankScan.js already uses when aggregating tags from a scan.
+  -- listing_count is refreshed on every re-scan+re-save (a proxy for
+  -- "how proven" a keyword is); source distinguishes scan-derived
+  -- keywords from ones added by hand later, since Step 3 (Listing
+  -- Revamp integration) may want to weight them differently.
+  CREATE TABLE IF NOT EXISTS keyword_bank_keywords (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category_id INTEGER NOT NULL REFERENCES keyword_bank_categories(id),
+    keyword TEXT NOT NULL COLLATE NOCASE,
+    listing_count INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'scan',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(category_id, keyword)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_keyword_bank_keywords_category ON keyword_bank_keywords(category_id);
 `)
 
   // SQLite has no `ADD COLUMN IF NOT EXISTS` — this checks PRAGMA
@@ -878,6 +915,95 @@ function getRecentNightlySyncLog(limit = 20) {
   return db.prepare(`SELECT * FROM nightly_sync_log ORDER BY ran_at DESC LIMIT ?`).all(limit)
 }
 
+// --- keyword_bank_categories / keyword_bank_keywords ---
+
+// Upserts one category and its keywords from a confirmed scan
+// selection (server/keywordBankScan.js's output, filtered to whichever
+// categories the seller chose to save — see
+// server/keywordBank.js for the handler that calls this per category).
+// Deliberately a MERGE, never a replace: an existing keyword's
+// listing_count is refreshed to the latest scan value, but nothing is
+// ever deleted here — a keyword added by hand (source='manual'), or one
+// that simply didn't come up in this particular scan, stays in the
+// bank. Re-running a save (e.g. after re-scanning later) is safe to
+// repeat as often as needed.
+function saveKeywordBankCategory({ taxonomyId, categoryPath, keywords }) {
+  db.prepare(
+    `INSERT INTO keyword_bank_categories (taxonomy_id, category_path)
+     VALUES (?, ?)
+     ON CONFLICT(taxonomy_id) DO UPDATE SET category_path = excluded.category_path, updated_at = datetime('now')`
+  ).run(taxonomyId, categoryPath)
+  const category = db
+    .prepare(`SELECT id FROM keyword_bank_categories WHERE taxonomy_id = ?`)
+    .get(taxonomyId)
+
+  const upsertKeyword = db.prepare(
+    `INSERT INTO keyword_bank_keywords (category_id, keyword, listing_count, source)
+     VALUES (?, ?, ?, 'scan')
+     ON CONFLICT(category_id, keyword)
+     DO UPDATE SET listing_count = excluded.listing_count, updated_at = datetime('now')`
+  )
+  for (const { keyword, listingCount } of keywords) {
+    upsertKeyword.run(category.id, keyword, listingCount)
+  }
+  return category.id
+}
+
+function getKeywordBank() {
+  const categories = db.prepare(`SELECT * FROM keyword_bank_categories ORDER BY category_path`).all()
+  const keywordStmt = db.prepare(
+    `SELECT * FROM keyword_bank_keywords WHERE category_id = ? ORDER BY listing_count DESC, keyword ASC`
+  )
+  return categories.map((category) => ({
+    id: category.id,
+    taxonomyId: category.taxonomy_id,
+    categoryPath: category.category_path,
+    updatedAt: category.updated_at,
+    keywords: keywordStmt.all(category.id).map((row) => ({
+      id: row.id,
+      keyword: row.keyword,
+      listingCount: row.listing_count,
+      source: row.source,
+    })),
+  }))
+}
+
+// Used by Listing Revamp's rewrite flow (Step 3) — looked up by the
+// same taxonomyId a listing's own carried-over category already uses,
+// so no separate ID mapping is needed between the two features.
+function getKeywordBankForTaxonomy(taxonomyId) {
+  const category = db
+    .prepare(`SELECT id, category_path FROM keyword_bank_categories WHERE taxonomy_id = ?`)
+    .get(taxonomyId)
+  if (!category) return null
+  const keywords = db
+    .prepare(
+      `SELECT keyword, listing_count FROM keyword_bank_keywords WHERE category_id = ? ORDER BY listing_count DESC, keyword ASC`
+    )
+    .all(category.id)
+  return {
+    categoryPath: category.category_path,
+    keywords: keywords.map((row) => ({ keyword: row.keyword, listingCount: row.listing_count })),
+  }
+}
+
+// Manual additions (source='manual') — the "edited/added to manually
+// later" half of the feature. Silently a no-op if the keyword already
+// exists in this category (COLLATE NOCASE on the column already makes
+// this comparison case-insensitive), rather than erroring on a
+// harmless duplicate add.
+function addKeywordBankKeyword(categoryId, keyword) {
+  db.prepare(
+    `INSERT INTO keyword_bank_keywords (category_id, keyword, listing_count, source)
+     VALUES (?, ?, 0, 'manual')
+     ON CONFLICT(category_id, keyword) DO NOTHING`
+  ).run(categoryId, keyword.trim())
+}
+
+function removeKeywordBankKeyword(keywordId) {
+  db.prepare(`DELETE FROM keyword_bank_keywords WHERE id = ?`).run(keywordId)
+}
+
 // Table names are from the fixed internal list above, never from request
 // input, so interpolating them into SQL here is not an injection risk.
 function getDbStatus() {
@@ -1230,5 +1356,10 @@ export {
   logNightlySyncStep,
   getRecentNightlySyncLog,
   createAppSettingsHandler,
+  saveKeywordBankCategory,
+  getKeywordBank,
+  getKeywordBankForTaxonomy,
+  addKeywordBankKeyword,
+  removeKeywordBankKeyword,
   DB_PATH,
 }

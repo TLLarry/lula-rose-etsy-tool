@@ -43,6 +43,7 @@ import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './serv
 import { createWeeklyReportHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
+import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
 
 function etsyTitleWriterPlugin(env) {
   return {
@@ -128,6 +129,13 @@ function etsyTitleWriterPlugin(env) {
         '/api/keyword-bank-scan',
         createKeywordBankScanHandler(env, passwordsMatch)
       )
+      // Must be registered before '/api/keyword-bank' — connect
+      // middleware matches by path prefix, same reasoning as server.js.
+      server.middlewares.use(
+        '/api/keyword-bank/keyword',
+        createKeywordBankKeywordHandler(env, passwordsMatch)
+      )
+      server.middlewares.use('/api/keyword-bank', createKeywordBankHandler(env, passwordsMatch))
       server.middlewares.use('/api/weekly-report', createWeeklyReportHandler(env, passwordsMatch))
     },
   }
