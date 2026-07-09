@@ -14,6 +14,18 @@
 // widget. No seller facts or category selection here, though — this
 // still rewrites off a description plus the winning keywords/photos, not
 // a full from-scratch listing generation.
+//
+// Keyword Bank integration (Step 3): if the listing being revamped has a
+// taxonomyId and that category has a saved keyword bank
+// (server/keywordBank.js), its proven keywords are passed to
+// generateTitle/generateListingExtras as an ADDITIONAL signal alongside
+// the CSV-derived winning keywords — the model is instructed to prefer
+// them for tag selection when genuinely relevant, and to generate fresh
+// ones itself wherever the bank doesn't cover enough ground. This is
+// deliberately a soft preference expressed in the prompt, not a hard
+// pre-filter that force-injects exact tags: only the model can judge
+// whether a "proven" keyword from OTHER listings in the category is
+// actually a good fit for THIS specific listing's photos/description.
 import {
   generateTitle,
   generateListingExtras,
@@ -21,7 +33,31 @@ import {
   RequestError,
   validateImages,
 } from './listingApi.js'
-import { checkAppPassword } from './db.js'
+import { checkAppPassword, getKeywordBankForTaxonomy } from './db.js'
+
+// A keyword saved on just one listing isn't really "proven" in a
+// meaningful sense — it could be a one-off, listing-specific term.
+// Requiring at least 2 filters those out while still keeping the bar
+// low enough that a newly-built-out category (Step 2 was only just
+// populated) still contributes useful signal.
+const MIN_LISTING_COUNT_FOR_PROVEN = 2
+// keyword_bank_keywords is already sorted by listing_count DESC, so
+// this keeps the strongest, most-repeated terms and caps prompt size —
+// a well-established category (Balloons, in this project's own shop,
+// has 884 saved keywords) would otherwise dump an enormous, mostly
+// one-off list into every single rewrite call.
+const MAX_PROVEN_KEYWORDS_IN_PROMPT = 60
+
+function selectProvenKeywords(taxonomyId) {
+  if (!Number.isInteger(taxonomyId)) return { categoryPath: null, keywords: [] }
+  const bankEntry = getKeywordBankForTaxonomy(taxonomyId)
+  if (!bankEntry) return { categoryPath: null, keywords: [] }
+  const keywords = bankEntry.keywords
+    .filter((entry) => entry.listingCount >= MIN_LISTING_COUNT_FOR_PROVEN)
+    .slice(0, MAX_PROVEN_KEYWORDS_IN_PROMPT)
+    .map((entry) => entry.keyword)
+  return { categoryPath: bankEntry.categoryPath, keywords }
+}
 
 // Turns the ranked keyword list from /api/parse-listing-csv into the
 // single comma-separated string generateTitle/generateListingExtras
@@ -37,10 +73,15 @@ function buildKeywordsInput(keywords) {
   return `${phrases.join(', ')} (ranked by actual buyer search traffic for this listing, strongest first)`
 }
 
-// POST /api/rewrite-listing, body { description, keywords }. `keywords`
-// is the ranked array from /api/parse-listing-csv's `keywords` (or
-// `topKeywords`) field — each item shaped { keyword, visits, ... }.
-// Same x-app-password auth as every other endpoint.
+// POST /api/rewrite-listing, body { description, keywords, taxonomyId? }.
+// `keywords` is the ranked array from /api/parse-listing-csv's
+// `keywords` (or `topKeywords`) field — each item shaped { keyword,
+// visits, ... }. `taxonomyId` is optional — Listing Revamp sends the
+// loaded listing's own carried-over category (same field
+// createDraftListing/updateListing already use) so this can check the
+// Keyword Bank for that category; omitted entirely, the rewrite behaves
+// exactly as it did before Step 3 existed. Same x-app-password auth as
+// every other endpoint.
 function createRewriteListingHandler(env, passwordsMatch) {
   return async (req, res) => {
     if (req.method !== 'POST') {
@@ -53,7 +94,12 @@ function createRewriteListingHandler(env, passwordsMatch) {
     if (!checkAppPassword(req, res, env, passwordsMatch)) return
 
     try {
-      const { description, keywords: rawKeywords, images: rawImages } = await readJsonBody(req)
+      const {
+        description,
+        keywords: rawKeywords,
+        images: rawImages,
+        taxonomyId,
+      } = await readJsonBody(req)
 
       if (!Array.isArray(rawKeywords) || rawKeywords.length === 0) {
         throw new RequestError(
@@ -72,15 +118,23 @@ function createRewriteListingHandler(env, passwordsMatch) {
         )
       }
       const images = validateImages(rawImages)
+      const { categoryPath, keywords: provenKeywords } = selectProvenKeywords(taxonomyId)
 
-      const title = await generateTitle(env.ANTHROPIC_API_KEY, description, keywords, images)
+      const title = await generateTitle(
+        env.ANTHROPIC_API_KEY,
+        description,
+        keywords,
+        images,
+        provenKeywords
+      )
       const extras = await generateListingExtras(
         env.ANTHROPIC_API_KEY,
         description,
         keywords,
         title,
         images,
-        {}
+        {},
+        provenKeywords
       )
 
       res.end(
@@ -93,6 +147,11 @@ function createRewriteListingHandler(env, passwordsMatch) {
           // Omitted entirely (not even an empty array) when no images
           // were uploaded, matching the main writer's own response shape.
           ...(images.length > 0 ? { altText: extras.altText } : {}),
+          // Lets the review UI show whether/how the Keyword Bank
+          // actually factored into this rewrite — null category means
+          // either no taxonomyId was sent or that category has no saved
+          // bank yet, not an error.
+          keywordBank: { categoryPath, provenKeywordsUsed: provenKeywords.length },
         })
       )
     } catch (err) {

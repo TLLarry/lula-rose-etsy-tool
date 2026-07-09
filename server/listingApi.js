@@ -207,7 +207,18 @@ Follow these locked rules exactly:
 
 Respond with ONLY the title text. No quotation marks, no markdown, no explanation, no trailing period.`
 
-function buildTitleTextPrompt(description, keywords, hasImages) {
+// Shared by buildTitleTextPrompt and buildExtrasTextPrompt — Listing
+// Revamp's Keyword Bank integration (server/listingRevampRewrite.js)
+// passes real proven keywords for the listing's category here; every
+// other caller (the main Listing Tool, which has no category-based
+// keyword bank at all) simply never passes any, so this paragraph is
+// omitted for them exactly as before this feature existed.
+function buildProvenKeywordsParagraph(provenKeywords) {
+  if (!provenKeywords || provenKeywords.length === 0) return null
+  return `Proven category keywords: ${provenKeywords.join(', ')} (already used successfully across other listings in this exact same Etsy category — prefer selecting from these for tags whenever one is a genuine, relevant fit for THIS listing; only invent a new tag when none of these apply, or once you've used all the relevant ones and still need more to reach the required count)`
+}
+
+function buildTitleTextPrompt(description, keywords, hasImages, provenKeywords = []) {
   const parts = []
   const hasDescription = Boolean(description && description.trim())
 
@@ -222,15 +233,22 @@ function buildTitleTextPrompt(description, keywords, hasImages) {
   if (keywords && keywords.trim()) {
     parts.push(`Keywords to consider: ${keywords.trim()}`)
   }
+  const provenParagraph = buildProvenKeywordsParagraph(provenKeywords)
+  if (provenParagraph) parts.push(provenParagraph)
   if (parts.length === 0) {
     parts.push('Use only the attached photo(s) to write the title.')
   }
   return parts.join('\n\n')
 }
 
-function buildTitleContent(description, keywords, images) {
+function buildTitleContent(description, keywords, images, provenKeywords = []) {
   const imageBlocks = buildImageContentBlocks(images)
-  const textPrompt = buildTitleTextPrompt(description, keywords, imageBlocks.length > 0)
+  const textPrompt = buildTitleTextPrompt(
+    description,
+    keywords,
+    imageBlocks.length > 0,
+    provenKeywords
+  )
   return [...imageBlocks, { type: 'text', text: textPrompt }]
 }
 
@@ -347,9 +365,11 @@ function reconcileTags(tags) {
 // conversation accumulates every past attempt (rather than starting fresh
 // each round) so the model can see what it already tried and how far off
 // each one was, instead of repeating the same miss.
-async function retryTitleLength(apiKey, description, keywords, images, title) {
+async function retryTitleLength(apiKey, description, keywords, images, title, provenKeywords = []) {
   const client = new Anthropic({ apiKey })
-  const conversation = [{ role: 'user', content: buildTitleContent(description, keywords, images) }]
+  const conversation = [
+    { role: 'user', content: buildTitleContent(description, keywords, images, provenKeywords) },
+  ]
   let current = title
   let attempts = 0
 
@@ -378,7 +398,7 @@ async function retryTitleLength(apiKey, description, keywords, images, title) {
   return current
 }
 
-async function generateTitle(apiKey, description, keywords, images) {
+async function generateTitle(apiKey, description, keywords, images, provenKeywords = []) {
   if (!apiKey) {
     throw new Error(
       'ANTHROPIC_API_KEY is not set. Copy .env.example to .env and fill it in.'
@@ -391,7 +411,9 @@ async function generateTitle(apiKey, description, keywords, images) {
     max_tokens: 300,
     output_config: { effort: 'medium' },
     system: TITLE_RULES_SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildTitleContent(description, keywords, images) }],
+    messages: [
+      { role: 'user', content: buildTitleContent(description, keywords, images, provenKeywords) },
+    ],
   })
 
   const textBlock = response.content.find((block) => block.type === 'text')
@@ -406,7 +428,7 @@ async function generateTitle(apiKey, description, keywords, images) {
   // after MAX_LENGTH_RETRY_ATTEMPTS attempts, the title is returned as-is
   // and the frontend flags it in red rather than looping indefinitely.
   if (title.length < MIN_TITLE_LENGTH) {
-    title = await retryTitleLength(apiKey, description, keywords, images, title)
+    title = await retryTitleLength(apiKey, description, keywords, images, title, provenKeywords)
   }
 
   return title
@@ -542,7 +564,7 @@ const EMPTY_SPECS = {
   howToOrder: '',
 }
 
-function buildExtrasTextPrompt(description, keywords, title, hasImages, facts) {
+function buildExtrasTextPrompt(description, keywords, title, hasImages, facts, provenKeywords = []) {
   const parts = [`Etsy title already generated for this listing: ${title}`]
 
   const factsBlock = buildSellerFactsBlock(facts)
@@ -563,17 +585,20 @@ function buildExtrasTextPrompt(description, keywords, title, hasImages, facts) {
   if (keywords && keywords.trim()) {
     parts.push(`Seller-provided keywords: ${keywords.trim()}`)
   }
+  const provenParagraph = buildProvenKeywordsParagraph(provenKeywords)
+  if (provenParagraph) parts.push(provenParagraph)
   return parts.join('\n\n')
 }
 
-function buildExtrasContent(description, keywords, title, images, facts) {
+function buildExtrasContent(description, keywords, title, images, facts, provenKeywords = []) {
   const imageBlocks = buildLabeledImageContentBlocks(images)
   const textPrompt = buildExtrasTextPrompt(
     description,
     keywords,
     title,
     images.length > 0,
-    facts
+    facts,
+    provenKeywords
   )
   return [...imageBlocks, { type: 'text', text: textPrompt }]
 }
@@ -705,7 +730,15 @@ async function retryHeaderLength(apiKey, { title, description, keywords }, heade
   return current
 }
 
-async function generateListingExtras(apiKey, description, keywords, title, images, facts) {
+async function generateListingExtras(
+  apiKey,
+  description,
+  keywords,
+  title,
+  images,
+  facts,
+  provenKeywords = []
+) {
   const client = new Anthropic({ apiKey })
   const response = await client.messages.create({
     model: 'claude-opus-4-8',
@@ -718,7 +751,7 @@ async function generateListingExtras(apiKey, description, keywords, title, image
     messages: [
       {
         role: 'user',
-        content: buildExtrasContent(description, keywords, title, images, facts),
+        content: buildExtrasContent(description, keywords, title, images, facts, provenKeywords),
       },
     ],
   })

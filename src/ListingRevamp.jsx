@@ -212,6 +212,12 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
             data: photo.base64,
             name: photo.name,
           })),
+          // Lets the rewrite check the Keyword Bank for this listing's
+          // own category and prefer those proven keywords for tags —
+          // omitted (undefined) if the listing hasn't loaded a
+          // taxonomyId for some reason, which the backend treats the
+          // same as "no bank for this category," not an error.
+          taxonomyId: listing?.taxonomyId,
         }),
       })
       const data = await response.json()
@@ -719,6 +725,22 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                   Review and edit anything below before creating a draft — nothing is sent to
                   Etsy until you click Draft.
                 </p>
+
+                {rewriteResult.keywordBank &&
+                  (rewriteResult.keywordBank.categoryPath ? (
+                    <p className="subhead">
+                      Checked the Keyword Bank for <strong>{rewriteResult.keywordBank.categoryPath}</strong> —{' '}
+                      {rewriteResult.keywordBank.provenKeywordsUsed > 0
+                        ? `${rewriteResult.keywordBank.provenKeywordsUsed} proven keyword${rewriteResult.keywordBank.provenKeywordsUsed === 1 ? '' : 's'} were considered for tags, preferred over fresh ones where relevant.`
+                        : "that category is saved but doesn't have enough proven keywords yet, so tags were generated fresh."}
+                    </p>
+                  ) : (
+                    <p className="subhead">
+                      No Keyword Bank saved for this listing's category yet — tags were generated
+                      fresh. Scan and save this category on the Keyword Bank page to have future
+                      rewrites prefer proven keywords.
+                    </p>
+                  ))}
 
                 <div className="result-section">
                   <h2>Title</h2>
