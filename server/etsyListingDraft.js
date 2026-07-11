@@ -66,6 +66,7 @@ function validateDraftListingInput(body) {
     price,
     whoMade,
     whenMade,
+    isSupply,
     taxonomyId,
     shippingProfileId,
     readinessStateId,
@@ -98,6 +99,13 @@ function validateDraftListingInput(body) {
   }
   if (typeof whenMade !== 'string' || !whenMade.trim()) {
     throw new RequestError(400, 'when_made is required (e.g. "made_to_order", "2020_2026").')
+  }
+  // Optional per Etsy's docs (defaults to "finished product" if omitted)
+  // — but validated as a real boolean rather than silently coerced if
+  // the caller did send something, same as the other optional fields
+  // below.
+  if (isSupply !== undefined && isSupply !== null && typeof isSupply !== 'boolean') {
+    throw new RequestError(400, 'is_supply must be true or false if provided.')
   }
   if (!Number.isInteger(taxonomyId) || taxonomyId <= 0) {
     throw new RequestError(400, 'A valid taxonomy_id is required — pick a category first.')
@@ -136,6 +144,7 @@ function validateDraftListingInput(body) {
     price,
     whoMade,
     whenMade,
+    isSupply: typeof isSupply === 'boolean' ? isSupply : null,
     taxonomyId,
     shippingProfileId,
     readinessStateId,
@@ -165,6 +174,7 @@ function buildDraftListingBody({
   price,
   whoMade,
   whenMade,
+  isSupply,
   taxonomyId,
   shippingProfileId,
   readinessStateId,
@@ -182,6 +192,10 @@ function buildDraftListingBody({
   params.set('price', String(price))
   params.set('who_made', whoMade)
   params.set('when_made', whenMade)
+  // Optional on Etsy's side (defaults to "finished product" when
+  // omitted) — only sent when the caller actually provided one, same
+  // pattern as the other optional fields below.
+  if (isSupply !== null && isSupply !== undefined) params.set('is_supply', String(isSupply))
   params.set('taxonomy_id', String(taxonomyId))
   params.set('shipping_profile_id', String(shippingProfileId))
   params.set('readiness_state_id', String(readinessStateId))
@@ -266,9 +280,9 @@ async function createEtsyDraftListing(env, listingInput) {
 }
 
 // POST /api/create-draft-listing, body { title, description, tags,
-// quantity, price, whoMade, whenMade, taxonomyId, shippingProfileId,
-// readinessStateId, images? }. Same x-app-password auth as every other
-// endpoint.
+// quantity, price, whoMade, whenMade, isSupply?, taxonomyId,
+// shippingProfileId, readinessStateId, images? }. Same x-app-password
+// auth as every other endpoint.
 function createDraftListingHandler(env, passwordsMatch) {
   return async (req, res) => {
     if (req.method !== 'POST') {

@@ -117,6 +117,14 @@ async function fetchEtsyListing(env, listingId) {
     title: typeof data.title === 'string' ? data.title : '',
     description: typeof data.description === 'string' ? data.description : '',
     tags: Array.isArray(data.tags) ? data.tags : [],
+    // Etsy's own structured material tags (e.g. ["Latex"] or ["Foil",
+    // "Mylar"]) — confirmed present on the plain listings/{id} GET, same
+    // field/shape as the shop's listings/active list endpoint. Used by
+    // the Balloons multi-category duplication feature to detect latex
+    // vs. foil/mylar reliably, instead of scanning title/description
+    // text (this shop fills materials in consistently, per a live
+    // check across its own active listings).
+    materials: Array.isArray(data.materials) ? data.materials : [],
     images: normalizeImages(data.images),
     url: typeof data.url === 'string' ? data.url : null,
     state: typeof data.state === 'string' ? data.state : null,

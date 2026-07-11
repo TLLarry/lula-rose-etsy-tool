@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { MAX_IMAGES, ALLOWED_IMAGE_TYPES, readFileAsDataUrl, validateImageFiles } from './imageUpload.js'
 import TaxonomyPicker from './TaxonomyPicker'
+import { getCategoryDefaults } from './categoryDefaults'
+import { detectBalloonMaterial, getBalloonCategorySet, BALLOON_FIELD_DEFAULTS } from './balloonCategories'
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024
 const MIN_TITLE_LENGTH = 135
@@ -75,11 +77,24 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   const [draftQuantity, setDraftQuantity] = useState('')
   const [draftPrice, setDraftPrice] = useState('')
   const [draftWhoMade, setDraftWhoMade] = useState('i_did')
+  // "What is it" (Etsy's is_supply) — editable via its own dropdown,
+  // same as whoMade, but also carried over from the loaded listing or
+  // (for categories with a defined rule — see categoryDefaults.js,
+  // Balloons is the first) auto-set the moment that category is
+  // selected. Auto-set is always visible and overridable, never silent.
+  const [draftIsSupply, setDraftIsSupply] = useState(false)
   const [draftTaxonomyId, setDraftTaxonomyId] = useState(null)
   const [draftTaxonomyLabel, setDraftTaxonomyLabel] = useState('')
   const [creatingDraft, setCreatingDraft] = useState(false)
   const [draftCreateResult, setDraftCreateResult] = useState(null)
   const [draftCreateError, setDraftCreateError] = useState('')
+  // Balloons multi-category duplication (see balloonCategories.js) —
+  // one draft per legitimate category for the detected material, each
+  // with no images (the seller adds distinct images per draft
+  // manually). Results are per-category so a partial failure (e.g. one
+  // category rejected) doesn't hide which drafts DID succeed.
+  const [creatingBalloonDrafts, setCreatingBalloonDrafts] = useState(false)
+  const [balloonDraftResults, setBalloonDraftResults] = useState(null)
   const [updatingListing, setUpdatingListing] = useState(false)
   const [updateListingResult, setUpdateListingResult] = useState(null)
   const [updateListingError, setUpdateListingError] = useState('')
@@ -120,9 +135,16 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       // point it has a real label.
       setDraftQuantity(data.quantity != null ? String(data.quantity) : '')
       setDraftPrice(data.price != null ? String(data.price) : '')
-      setDraftWhoMade(data.whoMade || 'i_did')
       setDraftTaxonomyId(data.taxonomyId ?? null)
       setDraftTaxonomyLabel('')
+      // No categoryPath yet at load time (that only exists once the
+      // seller opens TaxonomyPicker and picks something) — matched by
+      // taxonomyId alone here. A category with a defined default rule
+      // (e.g. Balloons) wins over whatever the listing itself carries;
+      // otherwise fall back to the carried-over values, unchanged.
+      const categoryDefaults = getCategoryDefaults(data.taxonomyId ?? null, null)
+      setDraftWhoMade(categoryDefaults?.whoMade ?? data.whoMade ?? 'i_did')
+      setDraftIsSupply(categoryDefaults?.isSupply ?? data.isSupply ?? false)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -261,11 +283,13 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   }
 
   // The actual write action — only ever called by clicking "Draft",
-  // never automatically. who_made/when_made/shipping/readiness/
-  // dimensions all come straight from the loaded listing (no editable
-  // form for those yet); title/tags/description and quantity/price/
-  // category reflect whatever's currently in the review form, edits
-  // included.
+  // never automatically. when_made/shipping/readiness/dimensions all
+  // come straight from the loaded listing (no editable form for those
+  // yet); title/tags/description and quantity/price/category reflect
+  // whatever's currently in the review form, edits included. whoMade is
+  // directly editable (see draftWhoMade); isSupply has no direct control
+  // but is carried over from the listing unless a category default rule
+  // overrides it (see categoryDefaults.js / draftIsSupply).
   const handleCreateDraft = async () => {
     if (!listing) return
     setCreatingDraft(true)
@@ -283,6 +307,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
           price: Number(draftPrice),
           whoMade: draftWhoMade,
           whenMade: listing.whenMade,
+          isSupply: draftIsSupply,
           taxonomyId: draftTaxonomyId,
           shippingProfileId: listing.shippingProfileId,
           readinessStateId: listing.readinessStateId,
@@ -344,12 +369,13 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
           price: Number(draftPrice),
           // who_made/when_made/is_supply form one interdependent group
           // on write (confirmed via a real Etsy rejection) — when_made
-          // and is_supply aren't editable in this UI, so they're always
-          // carried over from the loaded listing alongside whoMade,
-          // which is editable.
+          // isn't editable in this UI so it's always carried over from
+          // the loaded listing, alongside whoMade and isSupply, which
+          // are (isSupply only indirectly, via categoryDefaults.js —
+          // see draftIsSupply above).
           whoMade: draftWhoMade,
           whenMade: listing.whenMade,
-          isSupply: listing.isSupply,
+          isSupply: draftIsSupply,
           taxonomyId: draftTaxonomyId,
           images: photos.map((photo) => ({
             mediaType: photo.mediaType,
@@ -456,6 +482,77 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       // Clipboard API can be blocked by browser permissions — nothing to
       // recover from here, the text is still visible to copy manually.
     }
+  }
+
+  // Recomputed on every render rather than stored in state — cheap, and
+  // it needs to track draftTitle/draftHeader/draftBody live (the
+  // fallback keyword scan should see whatever's currently in the review
+  // form, not a stale snapshot from load time). listing.materials never
+  // changes after load (no editable control for it), so it's always the
+  // primary signal when present.
+  const detectedBalloonMaterial = listing
+    ? detectBalloonMaterial({
+        materials: listing.materials,
+        title: draftTitle,
+        description: `${draftHeader} ${draftBody}`,
+      })
+    : null
+  const balloonCategorySet = detectedBalloonMaterial
+    ? getBalloonCategorySet(detectedBalloonMaterial)
+    : null
+
+  // Creates one draft per category in balloonCategorySet — same title/
+  // description/tags/quantity/price/shipping/readiness/dimensions
+  // carried over exactly like the single Draft button above, but a
+  // different taxonomyId each time and NO images (the seller adds
+  // distinct images per draft manually afterward, same reasoning as the
+  // single-draft flow's own image-upload step). who_made/is_supply are
+  // always the Balloons defaults (see BALLOON_FIELD_DEFAULTS) regardless
+  // of which specific sibling/parent category a given draft lands in —
+  // it's the same physical balloon supply product throughout, just
+  // filed under a different discovery path each time. Failures are
+  // per-category so one rejected category (e.g. a bad taxonomy_id)
+  // doesn't hide drafts that DID succeed.
+  const handleCreateBalloonCategoryDrafts = async () => {
+    if (!listing || !balloonCategorySet) return
+    setCreatingBalloonDrafts(true)
+    setBalloonDraftResults(null)
+    const results = []
+    for (const category of balloonCategorySet) {
+      try {
+        const response = await fetch('/api/create-draft-listing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+          body: JSON.stringify({
+            title: draftTitle,
+            description: `${draftHeader} ${draftBody}`,
+            tags: draftTags,
+            quantity: Number(draftQuantity),
+            price: Number(draftPrice),
+            whoMade: BALLOON_FIELD_DEFAULTS.whoMade,
+            whenMade: listing.whenMade,
+            isSupply: BALLOON_FIELD_DEFAULTS.isSupply,
+            taxonomyId: category.taxonomyId,
+            shippingProfileId: listing.shippingProfileId,
+            readinessStateId: listing.readinessStateId,
+            itemWeight: listing.itemWeight,
+            itemLength: listing.itemLength,
+            itemWidth: listing.itemWidth,
+            itemHeight: listing.itemHeight,
+            itemWeightUnit: listing.itemWeightUnit,
+            itemDimensionsUnit: listing.itemDimensionsUnit,
+            images: [],
+          }),
+        })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'Failed to create this draft.')
+        results.push({ category: category.fullPath, ok: true, listingId: data.listingId, url: data.url })
+      } catch (err) {
+        results.push({ category: category.fullPath, ok: false, error: err.message })
+      }
+    }
+    setBalloonDraftResults(results)
+    setCreatingBalloonDrafts(false)
   }
 
   return (
@@ -867,6 +964,24 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                         Manager &gt; Production Partners) — without one, Draft will fail.
                       </p>
                     )}
+                    {getCategoryDefaults(draftTaxonomyId, draftTaxonomyLabel) && (
+                      <p className="subhead">Auto-set for this category — change it if it's wrong.</p>
+                    )}
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="draft-is-supply">What is it</label>
+                    <select
+                      id="draft-is-supply"
+                      value={draftIsSupply ? 'true' : 'false'}
+                      onChange={(event) => setDraftIsSupply(event.target.value === 'true')}
+                    >
+                      <option value="false">A finished product</option>
+                      <option value="true">A supply or tool to make things</option>
+                    </select>
+                    {getCategoryDefaults(draftTaxonomyId, draftTaxonomyLabel) && (
+                      <p className="subhead">Auto-set for this category — change it if it's wrong.</p>
+                    )}
                   </div>
 
                   <TaxonomyPicker
@@ -876,6 +991,16 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                     onChange={(id, path) => {
                       setDraftTaxonomyId(id)
                       setDraftTaxonomyLabel(path)
+                      // Balloons (and any future category with a rule)
+                      // auto-fills "Who made it" / "What is it" the
+                      // moment it's picked — no manual selection needed.
+                      // Categories without a rule leave both fields
+                      // untouched.
+                      const categoryDefaults = getCategoryDefaults(id, path)
+                      if (categoryDefaults) {
+                        setDraftWhoMade(categoryDefaults.whoMade)
+                        setDraftIsSupply(categoryDefaults.isSupply)
+                      }
                     }}
                   />
 
@@ -995,6 +1120,64 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                         </>
                       )
                     })()}
+
+                  {listing && !balloonCategorySet && /balloon/i.test(listing.title || '') && (
+                    <p className="subhead">
+                      This looks like a balloon listing, but the material (latex vs. foil/mylar)
+                      couldn't be determined from Etsy's materials field or the title/description
+                      — mention "latex" or "foil"/"mylar" in one of those to use category
+                      duplication below.
+                    </p>
+                  )}
+
+                  {listing && balloonCategorySet && (
+                    <div className="field balloon-category-drafts">
+                      <p className="subhead">
+                        Detected material: <strong>{detectedBalloonMaterial === 'latex' ? 'Latex' : 'Foil/Mylar'}</strong>{' '}
+                        — creates one new draft per category below, using the title/tags/
+                        description above (who made it / what is it set the same as Balloons on
+                        every one). No images are attached; add distinct photos to each draft
+                        afterward.
+                      </p>
+                      <ul>
+                        {balloonCategorySet.map((category) => (
+                          <li key={category.taxonomyId}>{category.fullPath}</li>
+                        ))}
+                      </ul>
+                      <button
+                        type="button"
+                        className="revamp-button"
+                        onClick={handleCreateBalloonCategoryDrafts}
+                        disabled={
+                          creatingBalloonDrafts ||
+                          !draftTitle.trim() ||
+                          draftTags.length === 0 ||
+                          !draftQuantity ||
+                          !draftPrice
+                        }
+                      >
+                        {creatingBalloonDrafts
+                          ? 'Creating category drafts…'
+                          : `Create ${balloonCategorySet.length} Balloon Category Drafts`}
+                      </button>
+                      {balloonDraftResults && (
+                        <ul className="draft-image-errors">
+                          {balloonDraftResults.map((result, index) => (
+                            <li key={index} className={result.ok ? 'draft-success' : 'error'}>
+                              {result.category}:{' '}
+                              {result.ok ? (
+                                <a href={result.url} target="_blank" rel="noreferrer">
+                                  draft created
+                                </a>
+                              ) : (
+                                result.error
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )
