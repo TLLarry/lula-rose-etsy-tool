@@ -22,7 +22,7 @@ import { createTagScoresHandler, createTrendsHandler } from './server/analysis.j
 import { createCalendarHandler } from './server/calendar.js'
 import { createSendTestEmailHandler } from './server/reminders.js'
 import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
-import { createLoadListingHandler } from './server/etsyListing.js'
+import { createLoadListingHandler, createLoadCompetitorListingHandler } from './server/etsyListing.js'
 import { createDraftListingHandler } from './server/etsyListingDraft.js'
 import { updateListingHandler } from './server/etsyListingUpdate.js'
 import { createEtsyTaxonomyHandler } from './server/etsyTaxonomy.js'
@@ -109,6 +109,7 @@ app.use('/api/calendar', createCalendarHandler(env, passwordsMatch))
 app.use('/api/send-test-email', createSendTestEmailHandler(env, passwordsMatch))
 app.use('/api/run-reminder-check', createRunReminderCheckHandler(env))
 app.use('/api/load-listing', createLoadListingHandler(env, passwordsMatch))
+app.use('/api/load-competitor-listing', createLoadCompetitorListingHandler(env, passwordsMatch))
 app.use('/api/create-draft-listing', createDraftListingHandler(env, passwordsMatch))
 app.use('/api/update-listing', updateListingHandler(env, passwordsMatch))
 app.use('/api/etsy-taxonomy', createEtsyTaxonomyHandler(env, passwordsMatch))

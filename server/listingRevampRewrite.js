@@ -73,7 +73,43 @@ function buildKeywordsInput(keywords) {
   return `${phrases.join(', ')} (ranked by actual buyer search traffic for this listing, strongest first)`
 }
 
-// POST /api/rewrite-listing, body { description, keywords?, taxonomyId? }.
+// Long enough to carry real angles, short enough not to bloat the
+// prompt with an entire competitor description.
+const MAX_COMPETITOR_DESCRIPTION_CHARS = 600
+
+// "Combine Both" — builds a clearly-labeled, separately-framed segment
+// for a competitor's title/tags/description, kept apart from
+// buildKeywordsInput's own "ranked by actual buyer search traffic"
+// framing above (that framing is specific to the seller's OWN proven
+// keywords and wouldn't be true of a competitor's listing). Explicitly
+// told to the model as inspiration only, never as facts about THIS
+// product — `description` (the seller's own, passed separately) stays
+// the sole source of truth for what the product actually is, same as
+// every other rewrite this endpoint does.
+function buildCompetitorContextInput(competitorTitle, competitorTags, competitorDescription) {
+  const parts = []
+  if (typeof competitorTitle === 'string' && competitorTitle.trim()) {
+    parts.push(`Title: ${competitorTitle.trim()}`)
+  }
+  if (Array.isArray(competitorTags) && competitorTags.length > 0) {
+    const tags = competitorTags.filter((t) => typeof t === 'string' && t.trim())
+    if (tags.length > 0) parts.push(`Tags: ${tags.join(', ')}`)
+  }
+  if (typeof competitorDescription === 'string' && competitorDescription.trim()) {
+    parts.push(`Description: ${competitorDescription.trim().slice(0, MAX_COMPETITOR_DESCRIPTION_CHARS)}`)
+  }
+  if (parts.length === 0) return ''
+  return (
+    `A competitor's listing in this same category — ${parts.join(' | ')} — ` +
+    '(for SEO keyword and marketing-angle inspiration ONLY; this is a DIFFERENT seller\'s own ' +
+    'listing, not a source of facts about THIS product — never copy their specific claims, ' +
+    'specs, or details, only draw on genuinely relevant search terms and angles that also ' +
+    'apply to this actual product as described above)'
+  )
+}
+
+// POST /api/rewrite-listing, body { description, keywords?, taxonomyId?,
+// competitorTitle?, competitorTags?, competitorDescription? }.
 // `keywords` is OPTIONAL — normally the ranked array from
 // /api/parse-listing-csv's `keywords` (or `topKeywords`) field when a
 // CSV was uploaded, each item shaped { keyword, visits, ... }; when no
@@ -83,8 +119,13 @@ function buildKeywordsInput(keywords) {
 // the loaded listing's own carried-over category (same field
 // createDraftListing/updateListing already use) so this can check the
 // Keyword Bank for that category; omitted entirely, the rewrite behaves
-// exactly as it did before Step 3 existed. Same x-app-password auth as
-// every other endpoint.
+// exactly as it did before Step 3 existed. The three competitor* fields
+// are "Combine Both" only — Listing Revamp sends a competitor listing's
+// title/tags/description (loaded via /api/load-competitor-listing) so
+// buildCompetitorContextInput above can fold its keywords/angles in,
+// clearly separate from the seller's own; omitted on a normal
+// single-listing rewrite. Same x-app-password auth as every other
+// endpoint.
 function createRewriteListingHandler(env, passwordsMatch) {
   return async (req, res) => {
     if (req.method !== 'POST') {
@@ -102,6 +143,9 @@ function createRewriteListingHandler(env, passwordsMatch) {
         keywords: rawKeywords,
         images: rawImages,
         taxonomyId,
+        competitorTitle,
+        competitorTags,
+        competitorDescription,
       } = await readJsonBody(req)
 
       // Optional — a CSV's winning keywords are an enhancement, not a
@@ -111,7 +155,16 @@ function createRewriteListingHandler(env, passwordsMatch) {
       // buildKeywordsInput already degrades gracefully to '' (handled
       // as "no keywords" by every prompt builder downstream) if even
       // that's empty.
-      const keywords = Array.isArray(rawKeywords) ? buildKeywordsInput(rawKeywords) : ''
+      const ownKeywords = Array.isArray(rawKeywords) ? buildKeywordsInput(rawKeywords) : ''
+      // "Combine Both" only — all three competitor* fields are optional
+      // and absent on a normal single-listing rewrite, in which case
+      // this is '' and keywords below is unchanged from before.
+      const competitorContext = buildCompetitorContextInput(
+        competitorTitle,
+        competitorTags,
+        competitorDescription
+      )
+      const keywords = [ownKeywords, competitorContext].filter(Boolean).join(' — ')
       if (typeof description !== 'string' || !description.trim()) {
         throw new RequestError(
           400,
@@ -162,4 +215,4 @@ function createRewriteListingHandler(env, passwordsMatch) {
   }
 }
 
-export { buildKeywordsInput, createRewriteListingHandler }
+export { buildKeywordsInput, buildCompetitorContextInput, createRewriteListingHandler }

@@ -290,6 +290,50 @@ function createLoadListingHandler(env, passwordsMatch) {
   }
 }
 
+// POST /api/load-competitor-listing, body { url }. Same as
+// /api/load-listing above — same fetchEtsyListing call, same public
+// API-key-only read, same HTML entity decoding — but deliberately skips
+// checkListingBelongsToShop: this is explicitly for pulling a listing
+// that does NOT belong to the connected shop (Listing Revamp's "Combine
+// Both" feature — pulling a competitor's title/tags/description for
+// comparison). Same x-app-password auth as every other endpoint.
+function createLoadCompetitorListingHandler(env, passwordsMatch) {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      if (!isEtsyConfigured(env)) {
+        throw new RequestError(
+          503,
+          `Etsy isn't configured yet — missing: ${getMissingEtsyEnvVars(env).join(', ')}.`
+        )
+      }
+
+      const { url } = await readJsonBody(req)
+      const listingId = parseListingIdFromUrl(url)
+      if (!listingId) {
+        throw new RequestError(
+          400,
+          "That doesn't look like an Etsy listing link. Expected something like https://www.etsy.com/listing/1234567890/their-title."
+        )
+      }
+
+      const listing = await fetchEtsyListing(env, listingId)
+      res.end(JSON.stringify({ ok: true, ...listing }))
+    } catch (err) {
+      res.statusCode = err.status || 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
 export {
   parseListingIdFromUrl,
   fetchEtsyListing,
@@ -297,4 +341,5 @@ export {
   isEtsyConfigured,
   getMissingEtsyEnvVars,
   createLoadListingHandler,
+  createLoadCompetitorListingHandler,
 }

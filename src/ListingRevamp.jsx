@@ -47,13 +47,20 @@ function statusClass(status) {
 
 function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }) {
   const [listingUrl, setListingUrl] = useState('')
-  // Placeholder only — not wired to any fetch/logic yet, per Day 43's
-  // scope. Just local state so the input is a normal, typable controlled
-  // field rather than a hardcoded, read-only one.
   const [competitorListingUrl, setCompetitorListingUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [listing, setListing] = useState(null)
   const [error, setError] = useState('')
+
+  // Competitor listing — loaded via a separate endpoint
+  // (/api/load-competitor-listing) that skips the "must belong to your
+  // shop" check /api/load-listing enforces, since this is deliberately
+  // someone else's listing. Powers "Combine Both" below; unlocks once
+  // both this and `listing` are loaded.
+  const [competitorListing, setCompetitorListing] = useState(null)
+  const [loadingCompetitor, setLoadingCompetitor] = useState(false)
+  const [competitorError, setCompetitorError] = useState('')
+  const [combiningBoth, setCombiningBoth] = useState(false)
 
   const [csvFile, setCsvFile] = useState(null)
   const [parsingCsv, setParsingCsv] = useState(false)
@@ -185,6 +192,32 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     }
   }
 
+  // Same pattern as handleLoadListing above, but against
+  // /api/load-competitor-listing (no "must belong to your shop" check —
+  // this is deliberately someone else's listing). Only pulls
+  // title/tags/description/images for comparison; none of the
+  // draft-creation fields (quantity/price/taxonomy/etc.) apply to a
+  // listing this shop doesn't own.
+  const handleLoadCompetitorListing = async () => {
+    setLoadingCompetitor(true)
+    setCompetitorError('')
+    setCompetitorListing(null)
+    try {
+      const response = await fetch('/api/load-competitor-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({ url: competitorListingUrl }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "Failed to load the competitor's listing.")
+      setCompetitorListing(data)
+    } catch (err) {
+      setCompetitorError(err.message)
+    } finally {
+      setLoadingCompetitor(false)
+    }
+  }
+
   // Low Performers' "Revamp" button lands here with a specific listing
   // already chosen — seeds the link field and loads it immediately,
   // equivalent to the seller having pasted the URL and clicked Load
@@ -308,6 +341,64 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       setRewriteError(err.message)
     } finally {
       setRewriting(false)
+    }
+  }
+
+  // "Combine Both" — same /api/rewrite-listing call and same result
+  // handling as handleRewriteListing above (still MY description/photos/
+  // taxonomy as the actual product; still the same locked title/tag/
+  // description rules, since it's the exact same generation call), but
+  // also sends the loaded competitor listing's title/tags/description so
+  // the backend can fold in its keywords/angles (buildCompetitorContextInput
+  // in listingRevampRewrite.js) — clearly labeled there as inspiration
+  // only, never as facts about this product. CSV is optional here too,
+  // same fallback to this listing's own title/tags as Rewrite/Revamp use.
+  const handleCombineBoth = async () => {
+    if (!listing || !competitorListing || !rewriteDescription.trim()) return
+    setCombiningBoth(true)
+    setRewriteError('')
+    setRewriteResult(null)
+    try {
+      const response = await fetch('/api/rewrite-listing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({
+          description: rewriteDescription,
+          keywords: csvResult
+            ? csvResult.topKeywords
+            : [{ keyword: listing.title }, ...listing.tags.map((tag) => ({ keyword: tag }))],
+          images: photos.map((photo) => ({
+            mediaType: photo.mediaType,
+            data: photo.base64,
+            name: photo.name,
+          })),
+          taxonomyId: listing?.taxonomyId,
+          competitorTitle: competitorListing.title,
+          competitorTags: competitorListing.tags,
+          competitorDescription: competitorListing.description,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to combine and rewrite these listings.')
+      setRewriteResult(data)
+      setDraftTitle(data.title)
+      setDraftTags(data.tags)
+      setDraftHeader(data.header)
+      setDraftBody(data.body)
+      setDraftCreateResult(null)
+      setDraftCreateError('')
+      if (Array.isArray(data.altText)) {
+        setPhotos((prev) =>
+          prev.map((photo, index) => ({
+            ...photo,
+            altText: data.altText[index]?.altText ?? photo.altText,
+          }))
+        )
+      }
+    } catch (err) {
+      setRewriteError(err.message)
+    } finally {
+      setCombiningBoth(false)
     }
   }
 
@@ -534,6 +625,11 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     setListing(null)
     setError('')
 
+    setCompetitorListing(null)
+    setLoadingCompetitor(false)
+    setCompetitorError('')
+    setCombiningBoth(false)
+
     setCsvFile(null)
     setParsingCsv(false)
     setCsvResult(null)
@@ -707,6 +803,14 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       >
         {loading ? 'Loading…' : 'Load Listing'}
       </button>
+      <button
+        type="button"
+        className="revamp-button"
+        onClick={handleLoadCompetitorListing}
+        disabled={!competitorListingUrl.trim() || loadingCompetitor}
+      >
+        {loadingCompetitor ? 'Loading…' : 'Load Competitor Listing'}
+      </button>
       {/* Same action as the "Rewrite Listing" button further down (see
           handleRewriteListing) — a shortcut so the seller doesn't have
           to scroll to the CSV section just to trigger a rewrite when
@@ -720,17 +824,18 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       >
         {rewriting ? 'Revamping…' : 'Revamp My Listing'}
       </button>
-      {/* Not built yet — combining the competitor link above into an
-          automatic rewrite is future scope (the competitor link field
-          above isn't even wired to a fetch yet). Disabled rather than
-          left clickable-but-inert, so it doesn't look broken in the
-          meantime. Competitor-informed comparisons live on the
-          Competitor Benchmarking page today (tag-gap analysis against a
-          linked listing of yours). Once built, this should unlock once
-          BOTH listing and the competitor listing are loaded — no CSV
-          requirement either. */}
-      <button type="button" className="revamp-button" disabled title="Coming soon">
-        Combine Both
+      {/* Same rewrite as Revamp My Listing above, but also folds in the
+          competitor listing's title/tags/description as keyword/angle
+          inspiration (see handleCombineBoth + buildCompetitorContextInput
+          in listingRevampRewrite.js). Unlocks once BOTH listings are
+          loaded — no CSV requirement, same as the other two. */}
+      <button
+        type="button"
+        className="revamp-button"
+        onClick={handleCombineBoth}
+        disabled={!listing || !competitorListing || !rewriteDescription.trim() || combiningBoth}
+      >
+        {combiningBoth ? 'Combining…' : 'Combine Both'}
       </button>
       <button type="button" className="revamp-button secondary-button" onClick={handleClearAll}>
         Clear
@@ -778,6 +883,39 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {competitorError && <p className="error">{competitorError}</p>}
+
+      {competitorListing && (
+        <div className="result">
+          <div className="result-section">
+            <h2>Competitor Title</h2>
+            <p className="title-text">{competitorListing.title}</p>
+          </div>
+
+          <div className="result-section">
+            <h2>Competitor Tags ({competitorListing.tags.length})</h2>
+            {competitorListing.tags.length === 0 ? (
+              <p className="subhead">No tags on this listing.</p>
+            ) : (
+              <ol className="tags-list">
+                {competitorListing.tags.map((tag, index) => (
+                  <li key={`${index}-${tag}`}>
+                    <span className="tag-text">{tag}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+
+          <div className="result-section">
+            <h2>Competitor Description</h2>
+            <p className="body-text">
+              {competitorListing.description || 'No description on this listing.'}
+            </p>
           </div>
         </div>
       )}
