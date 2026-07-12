@@ -55,7 +55,7 @@ import {
   createDashboardTaskCompleteHandler,
   createMarkRevampDoneHandler,
 } from './server/dashboardTasks.js'
-import { createWeeklyReportHandler } from './server/weeklyReport.js'
+import { createWeeklyReportHandler, createTrafficBreakdownHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
@@ -202,6 +202,10 @@ function etsyTitleWriterPlugin(env) {
       )
       server.middlewares.use('/api/keyword-bank', createKeywordBankHandler(env, passwordsMatch))
       server.middlewares.use('/api/weekly-report', createWeeklyReportHandler(env, passwordsMatch))
+      server.middlewares.use(
+        '/api/traffic-breakdown',
+        createTrafficBreakdownHandler(env, passwordsMatch)
+      )
     },
   }
 }

@@ -58,7 +58,7 @@ import {
   createDashboardTaskCompleteHandler,
   createMarkRevampDoneHandler,
 } from './server/dashboardTasks.js'
-import { createWeeklyReportHandler } from './server/weeklyReport.js'
+import { createWeeklyReportHandler, createTrafficBreakdownHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
@@ -157,6 +157,7 @@ app.use('/api/dashboard-tasks/mark-revamp-done', createMarkRevampDoneHandler(env
 app.use('/api/dashboard-tasks', createDashboardTasksHandler(env, passwordsMatch))
 app.use('/api/nightly-sync-log', createNightlySyncLogHandler(env, passwordsMatch))
 app.use('/api/weekly-report', createWeeklyReportHandler(env, passwordsMatch))
+app.use('/api/traffic-breakdown', createTrafficBreakdownHandler(env, passwordsMatch))
 app.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))
 app.use('/api/keyword-bank-scan', createKeywordBankScanHandler(env, passwordsMatch))
 // Must be registered before '/api/keyword-bank' — app.use matches by

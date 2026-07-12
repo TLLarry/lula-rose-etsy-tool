@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
-import WeeklyReport from './WeeklyReport'
 
 function formatMoney(cents) {
   if (typeof cents !== 'number') return '—'
   return `$${(cents / 100).toFixed(2)}`
 }
 
-// Placeholder-only layout for the rest of this page — no data wiring yet.
-// Top 3 / Bottom 3 Performing Listings are both wired to real data (see
-// loadTopSellers/loadBottomPerformers below) — ranked by units sold in
-// the last 30 days via server/etsyCoach.js.
+// Top 3 Performing Listings is wired to real data (see loadTopSellers
+// below) — ranked by units sold in the last 30 days via
+// server/etsyCoach.js. Bottom Performers and the standalone Weekly
+// Report card were removed — both were the same "which listings are
+// struggling" signal already covered by This Week's tasks and Trends
+// below, just repeated in a third place with no action attached.
 function Dashboard({ password, onRevampTask }) {
   const [tasks, setTasks] = useState([])
   const [tasksLoading, setTasksLoading] = useState(true)
@@ -27,10 +28,9 @@ function Dashboard({ password, onRevampTask }) {
   const [savingThreshold, setSavingThreshold] = useState(false)
   const [thresholdError, setThresholdError] = useState('')
 
-  const [bottomPerformers, setBottomPerformers] = useState([])
-  const [bottomLoading, setBottomLoading] = useState(true)
-  const [bottomError, setBottomError] = useState('')
-  const [expandedBottomId, setExpandedBottomId] = useState(null)
+  const [traffic, setTraffic] = useState(null)
+  const [trafficLoading, setTrafficLoading] = useState(true)
+  const [trafficError, setTrafficError] = useState('')
 
   const [ideas, setIdeas] = useState([])
   const [ideasLoading, setIdeasLoading] = useState(true)
@@ -163,20 +163,20 @@ function Dashboard({ password, onRevampTask }) {
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/bottom-performers', { headers: { 'x-app-password': password } })
+    fetch('/api/traffic-breakdown', { headers: { 'x-app-password': password } })
       .then(async (response) => {
         const body = await response.json()
-        if (!response.ok) throw new Error(body.error || 'Failed to load bottom performers.')
+        if (!response.ok) throw new Error(body.error || 'Failed to load traffic.')
         return body
       })
       .then((body) => {
-        if (!cancelled) setBottomPerformers(body.listings)
+        if (!cancelled) setTraffic(body)
       })
       .catch((err) => {
-        if (!cancelled) setBottomError(err.message)
+        if (!cancelled) setTrafficError(err.message)
       })
       .finally(() => {
-        if (!cancelled) setBottomLoading(false)
+        if (!cancelled) setTrafficLoading(false)
       })
     return () => {
       cancelled = true
@@ -293,8 +293,6 @@ function Dashboard({ password, onRevampTask }) {
           </ul>
         )}
       </div>
-
-      <WeeklyReport password={password} />
 
       <div className="dashboard-performers-box">
         <h2>Ideas</h2>
@@ -431,37 +429,26 @@ function Dashboard({ password, onRevampTask }) {
         </div>
 
         <div className="dashboard-performers-box">
-          <h2>Bottom 3 Performing Listings</h2>
-          <p className="subhead">Ranked by units sold in the last 30 days. Click one for why.</p>
+          <h2>Traffic</h2>
+          <p className="subhead">Views this week vs. last week, per listing — ranked by this week's views.</p>
 
-          {bottomError && <p className="error">{bottomError}</p>}
-          {bottomLoading && <p className="subhead">Loading…</p>}
+          {trafficError && <p className="error">{trafficError}</p>}
+          {trafficLoading && <p className="subhead">Loading…</p>}
 
-          {!bottomLoading && !bottomError && bottomPerformers.length === 0 && (
-            <p className="subhead">
-              Nothing stands out as underperforming right now — nice work.
-            </p>
+          {!trafficLoading && !trafficError && (!traffic || traffic.listings.length === 0) && (
+            <p className="subhead">No traffic tracked yet — check back once your Etsy account has synced.</p>
           )}
 
-          {!bottomLoading && bottomPerformers.length > 0 && (
+          {!trafficLoading && traffic && traffic.listings.length > 0 && (
             <ul className="dashboard-performer-list">
-              {bottomPerformers.map((listing) => (
-                <li key={listing.listingId}>
-                  <button
-                    type="button"
-                    className="dashboard-performer-button"
-                    onClick={() =>
-                      setExpandedBottomId((current) =>
-                        current === listing.listingId ? null : listing.listingId
-                      )
-                    }
-                  >
-                    {listing.title} — {listing.unitsSold30d} unit
-                    {listing.unitsSold30d === 1 ? '' : 's'} sold
-                  </button>
-                  {expandedBottomId === listing.listingId && (
-                    <p className="dashboard-performer-reason">{listing.reason}</p>
-                  )}
+              {traffic.listings.slice(0, 8).map((listing) => (
+                <li key={listing.listingId} className="dashboard-traffic-row">
+                  <span>{listing.title}</span>
+                  <span className="dashboard-traffic-count">
+                    {listing.viewsLastWeek} → {listing.viewsThisWeek} views
+                    {listing.percentChange != null &&
+                      ` (${listing.percentChange >= 0 ? '+' : ''}${(listing.percentChange * 100).toFixed(0)}%)`}
+                  </span>
                 </li>
               ))}
             </ul>

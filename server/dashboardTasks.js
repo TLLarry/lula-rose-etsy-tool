@@ -1,11 +1,12 @@
 // Dashboard "This Week" task engine — turns signals already computed
-// elsewhere in this app (Weekly Report's underperformers, Competitor
-// Benchmarking's price comparisons) into a short, ranked list of real
-// tasks, each with a genuine one-click action, instead of raw numbers
-// to read. Explicit design choice, per direct instruction: only task
-// types that can actually be completed with a single click belong
-// here — no "go restock this" reminders with nothing to click, since
-// this app has no way to execute that for you.
+// elsewhere in this app (Weekly Report's underperformers, real
+// per-listing traffic week-over-week, Competitor Benchmarking's price
+// comparisons) into a short, ranked list of real tasks, each with a
+// genuine one-click action, instead of raw numbers to read. Explicit
+// design choice, per direct instruction: only task types that can
+// actually be completed with a single click belong here — no "go
+// restock this" reminders with nothing to click, since this app has no
+// way to execute that for you.
 //
 // Three task types in this version:
 // - price-test: instant, stays on the Dashboard — directly calls
@@ -23,7 +24,7 @@
 //   from the exact format already tuned this session. One click still
 //   gets the whole thing done — it just finishes on the next screen
 //   instead of invisibly on the Dashboard.
-import { generateWeeklyReport } from './weeklyReport.js'
+import { generateWeeklyReport, getTrafficBreakdown } from './weeklyReport.js'
 import {
   listCompetitorShops,
   getRecentDashboardTaskActionKeys,
@@ -67,28 +68,56 @@ function isRevampEligible(shopListingRow) {
   return Date.now() - lastRevamped.getTime() >= REVAMP_COOLDOWN_DAYS * 24 * 60 * 60 * 1000
 }
 
-function buildRevampTasks(recentlyActionedKeys) {
+// A week-over-week views drop this sharp is a more specific, more
+// actionable reason to revamp than the generic weekly-underperformer
+// text — it directly names what changed. Ignored below this many views
+// last week so a drop from 2 views to 0 doesn't count as "sharp" purely
+// from a tiny sample.
+const SHARP_TRAFFIC_DROP_FRACTION = 0.5
+const MIN_VIEWS_FOR_TRAFFIC_SIGNAL = 4
+
+// One revamp candidate list, built from BOTH signal sources (weekly
+// underperformers AND a sharp traffic drop) rather than two separate,
+// possibly-overlapping task lists for the same listing — a listing that
+// qualifies both ways still only gets one "Revamp Now" task, with the
+// more specific traffic-drop reason winning when both apply.
+function buildRevampTasks(recentlyActionedKeys, trafficBreakdown) {
+  const candidatesById = new Map()
+
   const report = generateWeeklyReport()
-  if (!report.hasData) return []
+  if (report.hasData) {
+    for (const row of report.underperformers) {
+      candidatesById.set(row.listingId, { title: row.title, reason: row.recommendation })
+    }
+  }
+
+  for (const listing of trafficBreakdown.listings) {
+    if (listing.viewsLastWeek < MIN_VIEWS_FOR_TRAFFIC_SIGNAL) continue
+    if (listing.viewsThisWeek > listing.viewsLastWeek * SHARP_TRAFFIC_DROP_FRACTION) continue
+    candidatesById.set(listing.listingId, {
+      title: listing.title,
+      reason: `Views dropped from ${listing.viewsLastWeek} to ${listing.viewsThisWeek} this week — revamp to refresh its SEO and appeal.`,
+    })
+  }
 
   const tasks = []
-  for (const row of report.underperformers) {
-    const taskKey = `revamp-${row.listingId}`
+  for (const [listingId, candidate] of candidatesById) {
+    const taskKey = `revamp-${listingId}`
     if (recentlyActionedKeys.has(taskKey)) continue
 
-    const shopListing = getShopListingById(row.listingId)
+    const shopListing = getShopListingById(listingId)
     if (!shopListing || !isRevampEligible(shopListing)) continue
 
     tasks.push({
       taskKey,
       type: 'revamp',
-      text: row.recommendation.startsWith(row.title)
-        ? row.recommendation
-        : `"${row.title}" — ${row.recommendation}`,
+      text: candidate.reason.startsWith(candidate.title)
+        ? candidate.reason
+        : `"${candidate.title}" — ${candidate.reason}`,
       actionLabel: 'Revamp Now',
-      listingId: row.listingId,
+      listingId,
       etsyListingId: shopListing.etsy_listing_id,
-      listingTitle: row.title,
+      listingTitle: candidate.title,
     })
   }
   return tasks
@@ -131,19 +160,7 @@ function buildPriceTestTasks(recentlyActionedKeys) {
   return tasks
 }
 
-// "Low Performing Keywords" as raw data told you nothing to DO — this is
-// the same underlying signal (a keyword competitors rank for that your
-// shop-wide tags don't cover) turned into a real, instant, one-click
-// action: add a few of the missing tags directly to a specific
-// underperforming listing that has room for them. Deliberately does NOT
-// skip listings that already have a revamp task — tag-refresh is
-// instant and doesn't touch Claude at all, while revamp does, so
-// offering both on the same listing means there's still something you
-// can act on right now even if revamp generation is unavailable.
-function buildTagRefreshTasks(recentlyActionedKeys) {
-  const report = generateWeeklyReport()
-  if (!report.hasData) return []
-
+function getGapTagPool() {
   const shops = listCompetitorShops().map(buildCompetitorShopView)
   const gapTagPool = []
   const seenGapTags = new Set()
@@ -156,14 +173,44 @@ function buildTagRefreshTasks(recentlyActionedKeys) {
       }
     }
   }
+  return gapTagPool
+}
+
+// "Low Performing Keywords" as raw data told you nothing to DO — this is
+// the same underlying signal (a keyword competitors rank for that your
+// shop-wide tags don't cover) turned into a real, instant, one-click
+// action: add a few of the missing tags directly to a specific listing
+// that has room for them. Candidates come from two signals, merged into
+// one task per listing rather than two: weekly underperformers, and
+// listings with zero traffic both this week and last (a discoverability
+// problem tags can directly help with). Deliberately does NOT skip
+// listings that already have a revamp task — tag-refresh is instant and
+// doesn't touch Claude at all, while revamp does, so offering both on
+// the same listing means there's still something you can act on right
+// now even if revamp generation is unavailable.
+function buildTagRefreshTasks(recentlyActionedKeys, trafficBreakdown) {
+  const gapTagPool = getGapTagPool()
   if (gapTagPool.length === 0) return []
 
+  const candidatesById = new Map()
+  const report = generateWeeklyReport()
+  if (report.hasData) {
+    for (const row of report.underperformers) {
+      candidatesById.set(row.listingId, { title: row.title, zeroTraffic: false })
+    }
+  }
+  for (const listing of trafficBreakdown.listings) {
+    if (listing.viewsThisWeek === 0 && listing.viewsLastWeek === 0) {
+      candidatesById.set(listing.listingId, { title: listing.title, zeroTraffic: true })
+    }
+  }
+
   const tasks = []
-  for (const row of report.underperformers) {
-    const taskKey = `tag-refresh-${row.listingId}`
+  for (const [listingId, candidate] of candidatesById) {
+    const taskKey = `tag-refresh-${listingId}`
     if (recentlyActionedKeys.has(taskKey)) continue
 
-    const shopListing = getShopListingById(row.listingId)
+    const shopListing = getShopListingById(listingId)
     if (!shopListing) continue
 
     const currentTags = shopListing.tags_json ? JSON.parse(shopListing.tags_json) : []
@@ -173,15 +220,16 @@ function buildTagRefreshTasks(recentlyActionedKeys) {
     if (missingTags.length === 0 || roomLeft <= 0) continue
 
     const tagsToAdd = missingTags.slice(0, Math.min(TAG_REFRESH_COUNT, roomLeft))
+    const tagList = tagsToAdd.map((tag) => `"${tag}"`).join(', ')
 
     tasks.push({
       taskKey,
       type: 'tag-refresh',
-      text: `"${row.title}" is missing tags competitors rank for: ${tagsToAdd
-        .map((tag) => `"${tag}"`)
-        .join(', ')} — add them now.`,
+      text: candidate.zeroTraffic
+        ? `"${candidate.title}" got zero views again this week — add these competitor-proven tags to boost visibility: ${tagList}.`
+        : `"${candidate.title}" is missing tags competitors rank for: ${tagList} — add them now.`,
       actionLabel: `Add ${tagsToAdd.length} Tag${tagsToAdd.length === 1 ? '' : 's'}`,
-      listingId: row.listingId,
+      listingId,
       etsyListingId: shopListing.etsy_listing_id,
       currentTags,
       tagsToAdd,
@@ -205,8 +253,9 @@ function interleave(...lists) {
 
 function buildDashboardTasks() {
   const recentlyActionedKeys = getRecentDashboardTaskActionKeys(daysAgoIso(TASK_MEMORY_DAYS))
-  const revampTasks = buildRevampTasks(recentlyActionedKeys)
-  const tagRefreshTasks = buildTagRefreshTasks(recentlyActionedKeys)
+  const trafficBreakdown = getTrafficBreakdown()
+  const revampTasks = buildRevampTasks(recentlyActionedKeys, trafficBreakdown)
+  const tagRefreshTasks = buildTagRefreshTasks(recentlyActionedKeys, trafficBreakdown)
   const priceTestTasks = buildPriceTestTasks(recentlyActionedKeys)
   return interleave(revampTasks, priceTestTasks, tagRefreshTasks).slice(0, MAX_TASKS)
 }

@@ -300,9 +300,70 @@ function createWeeklyReportHandler(env, passwordsMatch) {
   }
 }
 
+// Real per-listing traffic to actually look at — every listing with
+// any activity in either week, ranked by this week's views, not just
+// the top/bottom 3 generateWeeklyReport already caps itself to. Live
+// (not persisted/cached) so it's never stale the way the stored
+// weekly_reports row can be between nightly runs.
+function getTrafficBreakdown(referenceDate = new Date()) {
+  const { thisWeekStart, thisWeekEnd, lastWeekStart, lastWeekEnd } = getWeekRanges(referenceDate)
+  const thisWeekRows = getListingStatsForDateRange(thisWeekStart, thisWeekEnd)
+  const lastWeekRows = getListingStatsForDateRange(lastWeekStart, lastWeekEnd)
+  const lastWeekById = new Map(lastWeekRows.map((row) => [row.listingId, row]))
+  const allListingIds = new Set([...thisWeekRows.map((r) => r.listingId), ...lastWeekRows.map((r) => r.listingId)])
+  const thisWeekById = new Map(thisWeekRows.map((row) => [row.listingId, row]))
+
+  const listings = [...allListingIds].map((listingId) => {
+    const current = thisWeekById.get(listingId)
+    const previous = lastWeekById.get(listingId)
+    const viewsThisWeek = current?.viewsGained ?? 0
+    const viewsLastWeek = previous?.viewsGained ?? 0
+    return {
+      listingId,
+      title: (current || previous).title,
+      thumbnailUrl: (current || previous).thumbnailUrl,
+      viewsThisWeek,
+      viewsLastWeek,
+      unitsThisWeek: current?.unitsSold ?? 0,
+      percentChange:
+        viewsLastWeek === 0
+          ? viewsThisWeek === 0
+            ? 0
+            : null
+          : (viewsThisWeek - viewsLastWeek) / viewsLastWeek,
+    }
+  })
+
+  listings.sort((a, b) => b.viewsThisWeek - a.viewsThisWeek)
+
+  return { weekStart: thisWeekStart, weekEnd: thisWeekEnd, listings }
+}
+
+// GET /api/traffic-breakdown.
+function createTrafficBreakdownHandler(env, passwordsMatch) {
+  return (req, res) => {
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      res.end(JSON.stringify({ ok: true, ...getTrafficBreakdown() }))
+    } catch (err) {
+      res.statusCode = 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
 export {
   getWeekRanges,
   generateWeeklyReport,
   generateAndStoreWeeklyReport,
   createWeeklyReportHandler,
+  getTrafficBreakdown,
+  createTrafficBreakdownHandler,
 }

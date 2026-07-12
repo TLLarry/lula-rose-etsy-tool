@@ -867,6 +867,28 @@ mark {
   gap: 8px;
 }
 
+.dashboard-traffic-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+.dashboard-traffic-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.dashboard-traffic-count {
+  color: var(--text);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* The "This Week" task engine — same .dashboard-performers-box card as
    everything else on this page, just given more padding/weight since
    it's the first thing on the Dashboard now, not a new color. */
@@ -910,19 +932,6 @@ mark {
   align-items: center;
   gap: 12px;
   flex-shrink: 0;
-}
-
-.dashboard-performer-button {
-  width: 100%;
-  text-align: left;
-  font: inherit;
-  font-size: 13px;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  cursor: pointer;
 }
 
 .dashboard-performer-reason {
@@ -1392,69 +1401,6 @@ mark {
   gap: 12px;
   border-top: 1px solid var(--border);
   padding-top: 24px;
-}
-
-/* Weekly Report — same latte card the competitor cards use, for the
-   home dashboard. */
-.weekly-report-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  border: 1px solid var(--latte-border);
-  background: var(--latte);
-  border-radius: 12px;
-  padding: 18px 20px;
-}
-
-.weekly-report-card h2 {
-  margin: 0;
-  font-size: 18px;
-}
-
-.weekly-report-range {
-  margin: -6px 0 0;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.weekly-report-summary {
-  margin: 0;
-  color: var(--text-h);
-}
-
-.weekly-report-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border-top: 1px solid var(--latte-border);
-  padding-top: 10px;
-}
-
-.weekly-report-section h3 {
-  margin: 0;
-  font-size: 14px;
-}
-
-.weekly-report-list {
-  list-style: disc;
-  padding-left: 20px;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  color: var(--text-h);
-}
-
-.weekly-report-underperformers li {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.weekly-report-recommendation {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
 }
 
 /* Same side-by-side, plain-white/thin-outline box pattern as the
