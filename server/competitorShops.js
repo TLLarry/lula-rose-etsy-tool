@@ -1,4 +1,4 @@
-// Competitor Benchmarking — three fixed shop-tracking slots. Every read
+// Competitor Benchmarking — five fixed shop-tracking slots. Every read
 // here is Etsy's PUBLIC, API-key-only surface (GET /shops/{id},
 // GET /shops/{id}/listings/active, GET /shops/{id}/reviews,
 // GET /shops?shop_name=) — no OAuth needed for a competitor's shop,
@@ -37,7 +37,7 @@ import { getCalendarData } from './calendar.js'
 
 const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 const PAGE_LIMIT = 100
-const MAX_COMPETITOR_SHOPS = 3
+const MAX_COMPETITOR_SHOPS = 5
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
 const THIRTY_DAYS_SECONDS = 30 * 24 * 60 * 60
 // Safety valve on the reviews pull, not a claim about data completeness

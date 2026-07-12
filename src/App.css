@@ -1131,7 +1131,7 @@ mark {
   gap: 12px;
 }
 
-/* The three fixed competitor-shop slots — side by side on wide screens,
+/* The fixed competitor-shop slots — side by side on wide screens,
    stacking on narrow ones. Layout only: each slot still renders the
    existing .competitor-card look below, no new colors here. */
 .competitor-shop-grid {

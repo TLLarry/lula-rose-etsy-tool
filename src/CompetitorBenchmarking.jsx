@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-const MAX_SLOTS = 3
+const MAX_SLOTS = 5
 const NOTABLE_PRICE_DIFF_FRACTION = 0.15
 
 // last_synced_at is a bare SQLite `datetime('now')` string (UTC, no
@@ -211,7 +211,7 @@ function CompetitorBenchmarking({ password }) {
     <section id="competitor-benchmarking-page">
       <h1>Competitor Benchmarking</h1>
       <p className="subhead">
-        Track up to three competitor shops. Each one is pulled fresh once a week, so you can see
+        Track up to five competitor shops. Each one is pulled fresh once a week, so you can see
         what's changed since the last check — new sales, new reviews, new listings, and price
         moves — without digging through their shop page yourself.
       </p>

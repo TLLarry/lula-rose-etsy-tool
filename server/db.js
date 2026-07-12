@@ -387,12 +387,13 @@ function initializeSchema(realDbInstance) {
 
   CREATE INDEX IF NOT EXISTS idx_section_revamp_progress_section ON section_revamp_progress(section_id);
 
-  -- Competitor Benchmarking's three tracked-shop slots. shop_id is
-  -- Etsy's own numeric shop id (resolved once from a pasted shop link
-  -- via GET /shops?shop_name=), UNIQUE so the same shop can't occupy two
-  -- slots at once. Enforcing "at most 3" is app-logic (in
-  -- server/competitorShops.js), not a schema constraint, since SQLite
-  -- has no clean way to cap row count declaratively.
+  -- Competitor Benchmarking's tracked-shop slots (MAX_COMPETITOR_SHOPS
+  -- in server/competitorShops.js). shop_id is Etsy's own numeric shop
+  -- id (resolved once from a pasted shop link via GET
+  -- ?shop_name=), UNIQUE so the same shop can't occupy two slots at
+  -- once. Enforcing the max slot count is app-logic, not a schema
+  -- constraint, since SQLite has no clean way to cap row count
+  -- declaratively.
   CREATE TABLE IF NOT EXISTS competitor_shops (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     shop_id TEXT NOT NULL UNIQUE,
