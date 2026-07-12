@@ -24,6 +24,9 @@ const MAX_TAG_LENGTH = 20
 const MIN_HEADER_LENGTH = 150
 const MAX_HEADER_LENGTH = 155
 const MAX_ALT_TEXT_LENGTH = 125
+// Pause takes effect after the current CLUSTER finishes (not mid-
+// listing) — this is the cluster size that boundary is checked against.
+const SECTION_CLUSTER_SIZE = 10
 
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
@@ -124,6 +127,18 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   const [sectionResults, setSectionResults] = useState([])
   const [processingSection, setProcessingSection] = useState(false)
   const [sectionError, setSectionError] = useState('')
+  // Record-player controls for the batch loop below. null means "never
+  // paused/stopped" (either hasn't run yet, or ran to completion) —
+  // distinct from 'paused'/'stopped' so the UI can say WHY it isn't
+  // running right now, even though resuming works identically either
+  // way (same processed/not-processed tracking). Refs, not state, for
+  // pauseRequested/stopRequested: the batch loop is a single long-lived
+  // async function, and it needs to observe a click that happens WHILE
+  // it's already running — a state variable captured in that function's
+  // closure at start time would never see a later setState.
+  const [sectionStopReason, setSectionStopReason] = useState(null)
+  const pauseRequestedRef = useRef(false)
+  const stopRequestedRef = useRef(false)
 
   const [csvFile, setCsvFile] = useState(null)
   const [parsingCsv, setParsingCsv] = useState(false)
@@ -271,11 +286,17 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   // (handleResolveSection below). The seller never has to say which one
   // they pasted.
   const handleLoadListingOrSection = async () => {
+    // Stops any section batch that's still actively running in the
+    // background before switching away from it — otherwise it would
+    // keep silently creating real drafts for the OLD section even
+    // after its own UI has disappeared (sectionInfo about to be reset).
+    stopRequestedRef.current = true
     const input = listingUrl.trim()
     if (LISTING_URL_PATTERN.test(input)) {
       setSectionInfo(null)
       setSectionResults([])
       setSectionError('')
+      setSectionStopReason(null)
       await handleLoadListing()
       return
     }
@@ -296,6 +317,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     setSectionError('')
     setSectionInfo(null)
     setSectionResults([])
+    setSectionStopReason(null)
     try {
       const response = await fetch('/api/resolve-section', {
         method: 'POST',
@@ -318,26 +340,58 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     }
   }
 
+  // Called by Play (both the initial start and every "Resume" click
+  // after a pause/stop) — recomputes what's still remaining from the
+  // LIVE sectionResults each time, not the one-time snapshot from
+  // /api/resolve-section, so a resume within the same session correctly
+  // skips whatever THIS session already finished (not just what was
+  // done before the section was first loaded).
+  const handlePlaySection = () => {
+    if (!sectionInfo || processingSection) return
+    pauseRequestedRef.current = false
+    stopRequestedRef.current = false
+    setSectionStopReason(null)
+    handleRevampSection()
+  }
+
+  // Sets a flag the running loop checks after the CURRENT CLUSTER
+  // finishes — never mid-listing, per the record-player rule ("stops
+  // after the current cluster finishes, don't cut off mid-listing").
+  const handlePauseSection = () => {
+    pauseRequestedRef.current = true
+  }
+
+  // Sets a flag the running loop checks after the CURRENT LISTING
+  // finishes (sooner than Pause's cluster boundary) — still never mid-
+  // listing, since abandoning a listing between its draft being created
+  // and its progress being recorded would leave an untracked draft that
+  // a later run could duplicate. Whatever's already been created as a
+  // draft stays exactly as it is; this only stops further processing.
+  const handleStopSection = () => {
+    stopRequestedRef.current = true
+  }
+
   // The actual batch write action. Runs every NOT-YET-DONE listing in
   // the section sequentially — full load → rewrite → GEO-format →
   // create draft, exactly the single-listing pipeline below, just
   // looped and without a per-listing review step (explicit, deliberate
   // choice — this section-batch feature auto-creates real drafts with
-  // no pause). Progress is recorded via /api/section-revamp-progress
+  // no review). Progress is recorded via /api/section-revamp-progress
   // right after EACH listing (success or failure), not deferred to the
-  // end, so an interrupted run (tab closed, crash) resumes correctly —
-  // re-resolving the same section later skips everything already
-  // 'done'. sectionResults updates after every listing too, for a truly
-  // live progress count rather than one that only moves every 10.
+  // end, so an interrupted run (tab closed, crash, or a deliberate
+  // Pause/Stop) resumes correctly — re-running this same function later
+  // skips everything already done. sectionResults updates after every
+  // listing too, for a truly live progress count.
   const handleRevampSection = async () => {
     if (!sectionInfo) return
     setProcessingSection(true)
     setSectionError('')
-    const alreadyDone = new Set(sectionInfo.doneListingIds)
+    const alreadyDone = new Set(sectionResults.filter((r) => r.ok).map((r) => r.sourceListingId))
     const remaining = sectionInfo.listingIds.filter((id) => !alreadyDone.has(id))
     const results = sectionResults.slice()
 
-    for (const sourceListingId of remaining) {
+    for (let i = 0; i < remaining.length; i++) {
+      const sourceListingId = remaining[i]
       let title = sourceListingId
       try {
         const loadResponse = await fetch('/api/load-listing', {
@@ -454,6 +508,20 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
         results.push({ sourceListingId, title, ok: false, error: err.message })
       }
       setSectionResults([...results])
+
+      // Stop wins over Pause if both were somehow requested — checked
+      // first, and sooner (per listing, not per cluster).
+      if (stopRequestedRef.current) {
+        setProcessingSection(false)
+        setSectionStopReason('stopped')
+        return
+      }
+      const atClusterBoundary = (i + 1) % SECTION_CLUSTER_SIZE === 0
+      if (atClusterBoundary && pauseRequestedRef.current) {
+        setProcessingSection(false)
+        setSectionStopReason('paused')
+        return
+      }
     }
 
     setProcessingSection(false)
@@ -897,10 +965,17 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     setCompetitorError('')
     setCombiningBoth(false)
 
+    // Stop any in-flight batch loop first — it'll observe this at its
+    // next per-listing checkpoint and exit cleanly (same as a manual
+    // Stop click) rather than continuing to run against state that was
+    // just cleared out from under it.
+    stopRequestedRef.current = true
+    pauseRequestedRef.current = true
     setSectionInfo(null)
     setSectionResults([])
     setProcessingSection(false)
     setSectionError('')
+    setSectionStopReason(null)
 
     setCsvFile(null)
     setParsingCsv(false)
@@ -1176,24 +1251,61 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                   {totalCount} active listing{totalCount === 1 ? '' : 's'} —{' '}
                   {doneCount} already revamped, {remainingCount} remaining.
                 </p>
-                <button
-                  type="button"
-                  className="revamp-button"
-                  onClick={handleRevampSection}
-                  disabled={processingSection || remainingCount === 0}
-                >
-                  {processingSection
-                    ? `Revamping… (${doneCount} of ${totalCount} done)`
-                    : remainingCount === 0
-                      ? 'Entire section already revamped'
-                      : `Revamp Entire Section (${remainingCount} listing${remainingCount === 1 ? '' : 's'})`}
-                </button>
+                <div className="draft-actions">
+                  {!processingSection && (
+                    <button
+                      type="button"
+                      className="revamp-button"
+                      onClick={handlePlaySection}
+                      disabled={remainingCount === 0}
+                    >
+                      {remainingCount === 0
+                        ? 'Entire section already revamped'
+                        : sectionStopReason
+                          ? `Resume (${remainingCount} listing${remainingCount === 1 ? '' : 's'} left)`
+                          : `Revamp Entire Section (${remainingCount} listing${remainingCount === 1 ? '' : 's'})`}
+                    </button>
+                  )}
+                  {processingSection && (
+                    <>
+                      <button type="button" className="revamp-button" onClick={handlePauseSection}>
+                        Pause
+                      </button>
+                      <button
+                        type="button"
+                        className="revamp-button secondary-button"
+                        onClick={handleStopSection}
+                      >
+                        Stop
+                      </button>
+                    </>
+                  )}
+                </div>
                 <p className="subhead">
                   Creates a real DRAFT for every listing automatically — no per-listing review
                   step. Safe to close this tab and come back later: re-loading this same section
                   will skip anything already done and pick up where it left off.
                 </p>
-                {!processingSection && remainingCount === 0 && sectionResults.length > 0 && (
+                {processingSection && (
+                  <p className="subhead">
+                    Revamping… ({doneCount} of {totalCount} done). Pause stops after the current
+                    cluster of {SECTION_CLUSTER_SIZE} finishes; Stop ends the run after the
+                    current listing — either way, nothing already drafted is undone.
+                  </p>
+                )}
+                {!processingSection && sectionStopReason === 'paused' && (
+                  <p className="guessed-badge">
+                    Paused — {doneCount} of {totalCount} done. Click Resume to continue with the
+                    next cluster.
+                  </p>
+                )}
+                {!processingSection && sectionStopReason === 'stopped' && (
+                  <p className="guessed-badge">
+                    Stopped — {doneCount} of {totalCount} done. Everything already drafted stays
+                    as-is; click Resume to continue.
+                  </p>
+                )}
+                {!processingSection && !sectionStopReason && remainingCount === 0 && sectionResults.length > 0 && (
                   <p className="draft-success">
                     Done — all {totalCount} listings in this section now have drafts.
                   </p>
