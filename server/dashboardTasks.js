@@ -7,9 +7,14 @@
 // here — no "go restock this" reminders with nothing to click, since
 // this app has no way to execute that for you.
 //
-// Two task types in this first version:
+// Three task types in this version:
 // - price-test: instant, stays on the Dashboard — directly calls
 //   Etsy's inventory-update endpoint (server/etsyListingInventory.js).
+// - tag-refresh: instant, stays on the Dashboard — directly calls
+//   Etsy's listing-update endpoint (server/etsyListingUpdate.js) to add
+//   a few competitor-proven tags a specific listing is missing. This is
+//   what "Low Performing Keywords" used to be as an inert placeholder —
+//   the same underlying signal, now something you can actually act on.
 // - revamp: takes you to Listing Revamp with the pipeline already
 //   running — NOT reimplemented here, because the real revamp pipeline
 //   (title/description generation, the GEO description format, draft
@@ -29,6 +34,7 @@ import {
 } from './db.js'
 import { buildCompetitorShopView } from './competitorShops.js'
 import { updateEtsyListingInventory } from './etsyListingInventory.js'
+import { updateEtsyListing } from './etsyListingUpdate.js'
 import { readJsonBody, RequestError } from './listingApi.js'
 
 const MAX_TASKS = 5
@@ -44,6 +50,10 @@ const NOTABLE_PRICE_DIFF_FRACTION = 0.15
 // A revamped listing isn't eligible again for this many days — direct
 // instruction: listings should only be revamped every 30 days.
 const REVAMP_COOLDOWN_DAYS = 30
+// How many missing tags to suggest adding at once — small and specific
+// beats dumping every gap tag onto one listing in a single click.
+const TAG_REFRESH_COUNT = 3
+const MAX_ETSY_TAGS = 13
 
 function daysAgoIso(days) {
   const date = new Date()
@@ -121,15 +131,73 @@ function buildPriceTestTasks(recentlyActionedKeys) {
   return tasks
 }
 
-// Interleaves the two task types (rather than all of one type first)
-// so a shop with many price-comparison links doesn't crowd out every
-// revamp suggestion, or vice versa.
-function interleave(listA, listB) {
+// "Low Performing Keywords" as raw data told you nothing to DO — this is
+// the same underlying signal (a keyword competitors rank for that your
+// shop-wide tags don't cover) turned into a real, instant, one-click
+// action: add a few of the missing tags directly to a specific
+// underperforming listing that has room for them. Deliberately skips
+// listings already carrying a revamp task this same build (passed in
+// via excludeListingIds) so one listing doesn't eat two task slots.
+function buildTagRefreshTasks(recentlyActionedKeys, excludeListingIds) {
+  const report = generateWeeklyReport()
+  if (!report.hasData) return []
+
+  const shops = listCompetitorShops().map(buildCompetitorShopView)
+  const gapTagPool = []
+  const seenGapTags = new Set()
+  for (const shop of shops) {
+    for (const tag of shop.tagGap.gap) {
+      const key = tag.trim().toLowerCase()
+      if (!seenGapTags.has(key)) {
+        seenGapTags.add(key)
+        gapTagPool.push(tag)
+      }
+    }
+  }
+  if (gapTagPool.length === 0) return []
+
+  const tasks = []
+  for (const row of report.underperformers) {
+    if (excludeListingIds.has(row.listingId)) continue
+    const taskKey = `tag-refresh-${row.listingId}`
+    if (recentlyActionedKeys.has(taskKey)) continue
+
+    const shopListing = getShopListingById(row.listingId)
+    if (!shopListing) continue
+
+    const currentTags = shopListing.tags_json ? JSON.parse(shopListing.tags_json) : []
+    const currentTagKeys = new Set(currentTags.map((tag) => tag.trim().toLowerCase()))
+    const missingTags = gapTagPool.filter((tag) => !currentTagKeys.has(tag.trim().toLowerCase()))
+    const roomLeft = MAX_ETSY_TAGS - currentTags.length
+    if (missingTags.length === 0 || roomLeft <= 0) continue
+
+    const tagsToAdd = missingTags.slice(0, Math.min(TAG_REFRESH_COUNT, roomLeft))
+
+    tasks.push({
+      taskKey,
+      type: 'tag-refresh',
+      text: `"${row.title}" is missing tags competitors rank for: ${tagsToAdd
+        .map((tag) => `"${tag}"`)
+        .join(', ')} — add them now.`,
+      actionLabel: `Add ${tagsToAdd.length} Tag${tagsToAdd.length === 1 ? '' : 's'}`,
+      listingId: row.listingId,
+      etsyListingId: shopListing.etsy_listing_id,
+      currentTags,
+      tagsToAdd,
+    })
+  }
+  return tasks
+}
+
+// Interleaves the task types (rather than all of one type first) so
+// one signal source doesn't crowd out the others.
+function interleave(...lists) {
   const result = []
-  const max = Math.max(listA.length, listB.length)
+  const max = Math.max(...lists.map((list) => list.length))
   for (let i = 0; i < max; i++) {
-    if (listA[i]) result.push(listA[i])
-    if (listB[i]) result.push(listB[i])
+    for (const list of lists) {
+      if (list[i]) result.push(list[i])
+    }
   }
   return result
 }
@@ -137,8 +205,10 @@ function interleave(listA, listB) {
 function buildDashboardTasks() {
   const recentlyActionedKeys = getRecentDashboardTaskActionKeys(daysAgoIso(TASK_MEMORY_DAYS))
   const revampTasks = buildRevampTasks(recentlyActionedKeys)
+  const excludeListingIds = new Set(revampTasks.map((task) => task.listingId))
+  const tagRefreshTasks = buildTagRefreshTasks(recentlyActionedKeys, excludeListingIds)
   const priceTestTasks = buildPriceTestTasks(recentlyActionedKeys)
-  return interleave(revampTasks, priceTestTasks).slice(0, MAX_TASKS)
+  return interleave(revampTasks, priceTestTasks, tagRefreshTasks).slice(0, MAX_TASKS)
 }
 
 async function executePriceTestTask(env, task) {
@@ -149,6 +219,11 @@ async function executePriceTestTask(env, task) {
   await updateEtsyListingInventory(env, Number(shopListing.etsy_listing_id), {
     price: task.newPriceCents / 100,
   })
+}
+
+async function executeTagRefreshTask(env, task) {
+  const newTags = [...task.currentTags, ...task.tagsToAdd].slice(0, MAX_ETSY_TAGS)
+  await updateEtsyListing(env, Number(task.etsyListingId), { tags: newTags })
 }
 
 // GET /api/dashboard-tasks.
@@ -223,6 +298,8 @@ function createDashboardTaskCompleteHandler(env, passwordsMatch) {
 
       if (task.type === 'price-test') {
         await executePriceTestTask(env, task)
+      } else if (task.type === 'tag-refresh') {
+        await executeTagRefreshTask(env, task)
       } else if (task.type === 'revamp') {
         throw new RequestError(400, 'Revamp tasks complete from the Listing Revamp page, not here.')
       } else {

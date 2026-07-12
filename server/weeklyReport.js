@@ -140,10 +140,17 @@ function buildSummaryText({ trendingUp, trendingDown, topPerformers, underperfor
 function summarizeIncome(rows) {
   const unitsSold = rows.reduce((sum, row) => sum + (row.unitsSold ?? 0), 0)
   const grossSalesCents = rows.reduce((sum, row) => sum + (row.revenueCents ?? 0), 0)
+  // Etsy's API exposes page views, not unique visitor counts — same
+  // "views" figure Etsy's own Shop Stats calls a visit for this exact
+  // conversion-rate math, so labeling it "Visitors" matches how Etsy
+  // itself presents this number, not a different metric being relabeled.
+  const viewsGained = rows.reduce((sum, row) => sum + (row.viewsGained ?? 0), 0)
   return {
     unitsSold,
     grossSalesCents,
     avgSaleValueCents: unitsSold > 0 ? Math.round(grossSalesCents / unitsSold) : null,
+    viewsGained,
+    conversionRate: viewsGained > 0 ? unitsSold / viewsGained : null,
   }
 }
 

@@ -303,25 +303,17 @@ function Dashboard({ password, onRevampTask }) {
 
       <div className="dashboard-row summary-cards">
         <div className="summary-card">
-          <p className="summary-card-label">Top Keywords</p>
-          <p className="summary-card-value">—</p>
-          <p className="summary-card-note">—% of total traffic</p>
-        </div>
-        <div className="summary-card">
-          <p className="summary-card-label">Low Performing Keywords</p>
-          <p className="summary-card-value">—</p>
-        </div>
-      </div>
-
-      <div className="dashboard-row summary-cards">
-        <div className="summary-card">
           <p className="summary-card-label">Visitors This Week</p>
-          <p className="summary-card-value">—</p>
+          <p className="summary-card-value">{weeklyIncome?.hasData ? weeklyIncome.viewsGained : '—'}</p>
         </div>
         <div className="summary-card">
           <p className="summary-card-label">Weekly Conversion Rate</p>
-          <p className="summary-card-value">—</p>
-          <p className="summary-card-note">Orders ÷ visits, vs. Etsy's ~2% benchmark</p>
+          <p className="summary-card-value">
+            {weeklyIncome?.hasData && weeklyIncome.conversionRate != null
+              ? `${(weeklyIncome.conversionRate * 100).toFixed(1)}%`
+              : '—'}
+          </p>
+          <p className="summary-card-note">Units sold ÷ views, vs. Etsy's ~2% benchmark</p>
         </div>
       </div>
 
