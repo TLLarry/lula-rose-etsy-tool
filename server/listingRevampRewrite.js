@@ -198,6 +198,14 @@ function createRewriteListingHandler(env, passwordsMatch) {
           tags: extras.tags,
           header: extras.header,
           body: extras.body,
+          // Already computed by generateListingExtras (server/listingApi.js's
+          // locked GEO spec) but previously discarded here — the caller
+          // needs these to assemble the full GEO-structured description
+          // (Specs Block + Mini-FAQ) instead of pushing just the plain
+          // marketing body to Etsy.
+          specs: extras.specs,
+          faq: extras.faq,
+          triggerPhrases: extras.triggerPhrases,
           // Omitted entirely (not even an empty array) when no images
           // were uploaded, matching the main writer's own response shape.
           ...(images.length > 0 ? { altText: extras.altText } : {}),

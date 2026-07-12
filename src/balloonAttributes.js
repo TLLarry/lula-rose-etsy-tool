@@ -140,14 +140,22 @@ const HOLIDAY_KEYWORDS = [
   ['Eid', ['eid al-fitr', 'eid al-adha', 'eid']],
   ['Holi', ['holi']],
   ['Lunar New Year', ['lunar new year', 'chinese new year']],
-  ["Mother's Day", ["mother's day", 'mothers day']],
-  ["Father's Day", ["father's day", 'fathers day']],
+  // Broadened past the literal "mother's/father's day" phrase — a real
+  // listing titled "Beer Balloon Party, Dads Birthday, Dads Birthday
+  // Gift" never says "Father's Day" outright but is unambiguously a
+  // dad/Father's-Day-themed product; the literal phrase alone missed it.
+  ["Mother's Day", ["mother's day", 'mothers day', 'mom', 'moms', 'mommy', 'mother']],
+  ["Father's Day", ["father's day", 'fathers day', 'dad', 'dads', 'daddy', 'father']],
   ["New Year's", ["new year's eve", 'new years eve']],
   ['Veterans Day', ['veterans day', "veteran's day"]],
 ]
 
 function findValueByName(list, name) {
   return list.find((v) => v.name === name) || null
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 // Within a single piece of text, picks whichever keyword occurs
@@ -161,13 +169,21 @@ function findValueByName(list, name) {
 // the table). Earliest-position is a better proxy for what the seller
 // actually led with, since specific/intentional theme words tend to
 // appear early while generic filler tags get appended toward the end.
+//
+// Matched on WORD boundaries (\b...\b), not a raw substring — confirmed
+// necessary too: short keywords like "mom"/"dad" (added for Mother's/
+// Father's Day detection) matched as plain substrings would false-
+// positive inside unrelated words like "Momentum" or "Daddy-Long-Legs"-
+// style compounds. Word-boundary matching still allows a real word
+// break either side, so "Dads Birthday" correctly matches "dads".
 function guessFromKeywords(text, keywordTable, valueList) {
   const lower = (text || '').toLowerCase()
   let best = null
   for (const [name, keywords] of keywordTable) {
     for (const keyword of keywords) {
-      const index = lower.indexOf(keyword)
-      if (index === -1) continue
+      const match = new RegExp(`\\b${escapeRegExp(keyword)}\\b`, 'i').exec(lower)
+      if (!match) continue
+      const index = match.index
       if (!best || index < best.index) best = { name, index }
     }
   }

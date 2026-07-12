@@ -45,6 +45,47 @@ function statusClass(status) {
   return 'status-average'
 }
 
+// Same section labels EtsyTool.jsx's own Specs Block already uses
+// (SPECS_FIELDS there) — kept identical rather than inventing different
+// wording for the same six fields.
+const SPECS_FIELDS = [
+  ['whatYouGet', 'What You Get'],
+  ['whoItsFor', "Who It's For"],
+  ['howItWorks', 'How It Works'],
+  ['sizingOrMaterials', 'Sizing or Materials'],
+  ['turnaroundTime', 'Turnaround Time'],
+  ['howToOrder', 'How to Order'],
+]
+
+// Assembles the actual GEO-structured description Etsy receives: the
+// generated marketing body, then the Specs Block, then the Mini-FAQ —
+// server/listingApi.js's locked GEO spec (server/listingApi.js's
+// LISTING_EXTRAS_SYSTEM_PROMPT — "AI Snippet opener" is draftHeader,
+// kept separate, unchanged), reused here exactly as designed rather
+// than generating description text a different way. Trigger phrases
+// aren't appended again as their own block — they're already woven
+// into `body` itself, same treatment as the Listing Tool's own Trigger
+// Phrases section (shown there purely for reference, not additional
+// description text — re-listing them here would just duplicate content
+// already in body).
+function formatGeoDescription(body, specs, faq) {
+  const sections = [body]
+
+  if (specs) {
+    const specsBlock = SPECS_FIELDS.filter(([key]) => specs[key])
+      .map(([key, label]) => `${label}: ${specs[key]}`)
+      .join('\n')
+    if (specsBlock) sections.push(specsBlock)
+  }
+
+  if (Array.isArray(faq) && faq.length > 0) {
+    const faqBlock = ['FAQ', ...faq.map((item) => `Q: ${item.question}\nA: ${item.answer}`)].join('\n\n')
+    sections.push(faqBlock)
+  }
+
+  return sections.filter(Boolean).join('\n\n')
+}
+
 function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }) {
   const [listingUrl, setListingUrl] = useState('')
   const [competitorListingUrl, setCompetitorListingUrl] = useState('')
@@ -159,13 +200,17 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       setRewriteDescription(data.description || '')
       // Seeds the Draft form's quantity/price/category from THIS
       // listing — re-loading a different listing re-seeds these too,
-      // same as rewriteDescription above. No label resolution here
-      // (that would mean fetching the full ~3,065-category list just to
-      // show one name) — TaxonomyPicker falls back to showing the raw
-      // ID until the seller opens it and picks something, at which
-      // point it has a real label.
+      // same as rewriteDescription above. No label resolution here (that
+      // would mean fetching the full ~3,065-category list just to show
+      // one name) — TaxonomyPicker resolves the real name itself from
+      // the category list it already fetches on mount, never falling
+      // back to showing the bare taxonomy_id.
       setDraftQuantity(data.quantity != null ? String(data.quantity) : '')
-      setDraftPrice(data.price != null ? String(data.price) : '')
+      // Always 2 decimals — this is exactly how the price will show on
+      // the live Etsy listing (e.g. "9.00", not "9"), so the field
+      // should read the same way, not a bare integer whenever the price
+      // happens to be a whole dollar amount.
+      setDraftPrice(data.price != null ? data.price.toFixed(2) : '')
       setDraftTaxonomyId(data.taxonomyId ?? null)
       setDraftTaxonomyLabel('')
       // No categoryPath yet at load time (that only exists once the
@@ -323,7 +368,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       setDraftTitle(data.title)
       setDraftTags(data.tags)
       setDraftHeader(data.header)
-      setDraftBody(data.body)
+      setDraftBody(formatGeoDescription(data.body, data.specs, data.faq))
       setDraftCreateResult(null)
       setDraftCreateError('')
       // AI-suggested alt text, present only when photos were uploaded —
@@ -384,7 +429,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       setDraftTitle(data.title)
       setDraftTags(data.tags)
       setDraftHeader(data.header)
-      setDraftBody(data.body)
+      setDraftBody(formatGeoDescription(data.body, data.specs, data.faq))
       setDraftCreateResult(null)
       setDraftCreateError('')
       if (Array.isArray(data.altText)) {
@@ -1209,11 +1254,23 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                       step="0.01"
                       value={draftPrice}
                       onChange={(event) => setDraftPrice(event.target.value)}
+                      onBlur={() => {
+                        const parsed = Number(draftPrice)
+                        // Only reformat once typing is done (not on every
+                        // keystroke, which would fight the seller mid-type)
+                        // — settles back to 2 decimals, matching what
+                        // Etsy's own listing page will actually show.
+                        if (draftPrice !== '' && Number.isFinite(parsed)) {
+                          setDraftPrice(parsed.toFixed(2))
+                        }
+                      }}
                     />
                   </div>
 
                   <div className="field">
-                    <label htmlFor="draft-who-made">Who made it</label>
+                    <label htmlFor="draft-who-made" className="field-label-large">
+                      Who made it
+                    </label>
                     <select
                       id="draft-who-made"
                       value={draftWhoMade}
@@ -1223,12 +1280,6 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                       <option value="someone_else">Another company or person</option>
                       <option value="collective">A member of my shop</option>
                     </select>
-                    {draftWhoMade === 'someone_else' && (
-                      <p className="subhead">
-                        Etsy requires a registered production partner for this option (Shop
-                        Manager &gt; Production Partners) — without one, Draft will fail.
-                      </p>
-                    )}
                     {getCategoryDefaults(draftTaxonomyId, draftTaxonomyLabel) && (
                       <p className="subhead">Auto-set for this category — change it if it's wrong.</p>
                     )}
@@ -1244,9 +1295,6 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                       <option value="false">A finished product</option>
                       <option value="true">A supply or tool to make things</option>
                     </select>
-                    {getCategoryDefaults(draftTaxonomyId, draftTaxonomyLabel) && (
-                      <p className="subhead">Auto-set for this category — change it if it's wrong.</p>
-                    )}
                   </div>
 
                   <div className="field">
@@ -1446,11 +1494,9 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                   {listing && balloonCategorySet && (
                     <div className="field balloon-category-drafts">
                       <p className="subhead">
-                        Detected material: <strong>{detectedBalloonMaterial === 'latex' ? 'Latex' : 'Foil/Mylar'}</strong>{' '}
-                        — creates one new draft per category below, using the title/tags/
-                        description above (who made it / what is it set the same as Balloons on
-                        every one). No images are attached; add distinct photos to each draft
-                        afterward.
+                        Creates one new draft per category below, using the title/tags/description
+                        above (who made it / what is it set the same as Balloons on every one). No
+                        images are attached; add distinct photos to each draft afterward.
                       </p>
                       <ul>
                         {balloonCategorySet.map((category) => (

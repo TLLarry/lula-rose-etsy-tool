@@ -55,9 +55,19 @@ function TaxonomyPicker({ password, value, valueLabel, onChange }) {
   }
 
   if (!isOpen) {
+    // Never show the raw taxonomy_id (e.g. "#1333") — Etsy's internal
+    // number, not something a seller needs to see. valueLabel is only
+    // set once the seller has actively picked something via this same
+    // picker; before that (a freshly loaded listing), resolve the name
+    // from the category list this component already fetches on mount,
+    // rather than falling back to the bare id.
+    const resolvedLabel =
+      valueLabel ||
+      (value != null ? categories.find((category) => category.id === value)?.fullPath : null) ||
+      (loading ? 'Loading category…' : 'Not set')
     return (
       <p className="taxonomy-picker-current">
-        Category: <strong>{valueLabel || (value ? `#${value}` : 'Not set')}</strong>{' '}
+        Category: <strong>{resolvedLabel}</strong>{' '}
         <button type="button" className="competitor-change-link" onClick={() => setIsOpen(true)}>
           Change
         </button>

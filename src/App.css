@@ -15,6 +15,13 @@
   color: var(--text-h);
 }
 
+/* "Who made it" specifically read too small relative to its own select
+   (16px) — scoped to this one label rather than bumping every field
+   label on the page. */
+.field-label-large {
+  font-size: 18px;
+}
+
 .field textarea,
 .field input {
   font: inherit;
