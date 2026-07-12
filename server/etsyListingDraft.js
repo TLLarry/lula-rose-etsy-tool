@@ -52,6 +52,7 @@ import { getValidAccessToken } from './etsyOAuth.js'
 import { checkAppPassword } from './db.js'
 import { readJsonBody, RequestError, validateImages } from './listingApi.js'
 import { uploadEtsyListingImages } from './etsyListingImages.js'
+import { applyEtsyListingProperties } from './etsyListingProperties.js'
 
 const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 
@@ -77,6 +78,7 @@ function validateDraftListingInput(body) {
     itemWeightUnit,
     itemDimensionsUnit,
     images: rawImages,
+    properties: rawProperties,
   } = body || {}
 
   if (typeof title !== 'string' || !title.trim()) {
@@ -136,6 +138,23 @@ function validateDraftListingInput(body) {
     }
   }
 
+  // Optional structured attributes (Materials, Occasion, Holiday, etc.)
+  // — set via a separate call per property AFTER the draft exists (see
+  // etsyListingProperties.js), same reasoning as images. Loosely
+  // validated here (a malformed entry is just dropped rather than
+  // failing the whole draft) since these are non-essential enrichment,
+  // not required fields.
+  const properties = Array.isArray(rawProperties)
+    ? rawProperties.filter(
+        (prop) =>
+          prop &&
+          Number.isInteger(prop.propertyId) &&
+          prop.propertyId > 0 &&
+          Array.isArray(prop.valueIds) &&
+          prop.valueIds.length > 0
+      )
+    : []
+
   return {
     title: title.trim(),
     description,
@@ -159,6 +178,7 @@ function validateDraftListingInput(body) {
     // optional, since a draft with no photos yet is a normal, valid
     // outcome, not an error.
     images: validateImages(rawImages),
+    properties,
   }
 }
 
@@ -281,8 +301,8 @@ async function createEtsyDraftListing(env, listingInput) {
 
 // POST /api/create-draft-listing, body { title, description, tags,
 // quantity, price, whoMade, whenMade, isSupply?, taxonomyId,
-// shippingProfileId, readinessStateId, images? }. Same x-app-password
-// auth as every other endpoint.
+// shippingProfileId, readinessStateId, images?, properties? }. Same
+// x-app-password auth as every other endpoint.
 function createDraftListingHandler(env, passwordsMatch) {
   return async (req, res) => {
     if (req.method !== 'POST') {
@@ -309,7 +329,17 @@ function createDraftListingHandler(env, passwordsMatch) {
         imageUpload = await uploadEtsyListingImages(env, result.listingId, listingInput.images)
       }
 
-      res.end(JSON.stringify({ ok: true, ...result, imageUpload }))
+      // Same non-fatal reasoning as image upload above — a rejected
+      // property (e.g. a value_id that turns out not to be valid for
+      // this specific taxonomy_id) shouldn't fail an otherwise-good
+      // draft. Per-property results ride along so it's visible which
+      // ones landed.
+      let propertiesResult = null
+      if (listingInput.properties.length > 0) {
+        propertiesResult = await applyEtsyListingProperties(env, result.listingId, listingInput.properties)
+      }
+
+      res.end(JSON.stringify({ ok: true, ...result, imageUpload, propertiesResult }))
     } catch (err) {
       res.statusCode = err.status || 500
       res.end(JSON.stringify({ error: err.message }))

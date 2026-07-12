@@ -90,4 +90,25 @@ function getBalloonCategorySet(material) {
   return BALLOON_CATEGORY_SETS[material] || null
 }
 
-export { detectBalloonMaterial, getBalloonCategorySet, BALLOON_FIELD_DEFAULTS, BALLOON_CATEGORY_SETS }
+// Every taxonomy_id this feature ever drafts into. Used to gate the
+// Materials/Occasion/Holiday property auto-fill (balloonAttributes.js)
+// to ONLY these 4 categories — their property_ids/value_ids were
+// confirmed live for exactly these, and blindly reusing them against an
+// arbitrary other category (e.g. if a seller manually points the single
+// Draft button's TaxonomyPicker somewhere unrelated) isn't verified to
+// be correct.
+const KNOWN_BALLOON_CATEGORY_IDS = new Set(
+  [...BALLOON_CATEGORY_SETS.latex, ...BALLOON_CATEGORY_SETS.foil_mylar].map((c) => c.taxonomyId)
+)
+
+function isKnownBalloonCategory(taxonomyId) {
+  return KNOWN_BALLOON_CATEGORY_IDS.has(taxonomyId)
+}
+
+export {
+  detectBalloonMaterial,
+  getBalloonCategorySet,
+  isKnownBalloonCategory,
+  BALLOON_FIELD_DEFAULTS,
+  BALLOON_CATEGORY_SETS,
+}

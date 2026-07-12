@@ -2,7 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { MAX_IMAGES, ALLOWED_IMAGE_TYPES, readFileAsDataUrl, validateImageFiles } from './imageUpload.js'
 import TaxonomyPicker from './TaxonomyPicker'
 import { getCategoryDefaults } from './categoryDefaults'
-import { detectBalloonMaterial, getBalloonCategorySet, BALLOON_FIELD_DEFAULTS } from './balloonCategories'
+import {
+  detectBalloonMaterial,
+  getBalloonCategorySet,
+  isKnownBalloonCategory,
+  BALLOON_FIELD_DEFAULTS,
+} from './balloonCategories'
+import {
+  OCCASION_PROPERTY_ID,
+  HOLIDAY_PROPERTY_ID,
+  OCCASION_VALUES,
+  HOLIDAY_VALUES,
+  getMaterialProperty,
+  guessOccasionAndHoliday,
+} from './balloonAttributes'
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024
 const MIN_TITLE_LENGTH = 135
@@ -83,6 +96,17 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   // Balloons is the first) auto-set the moment that category is
   // selected. Auto-set is always visible and overridable, never silent.
   const [draftIsSupply, setDraftIsSupply] = useState(false)
+  // Occasion/Holiday — auto-guessed from the loaded listing's title/
+  // description (balloonAttributes.js), but ALWAYS visible/editable via
+  // their own dropdowns, same standard as whoMade/isSupply above: never
+  // a silent write. The *Guessed flags track whether the current value
+  // is still the unreviewed auto-guess (shows a "guessed" badge) or one
+  // the seller has actively picked/confirmed themselves — cleared the
+  // moment either dropdown is touched, regardless of what's selected.
+  const [draftOccasion, setDraftOccasion] = useState(null)
+  const [draftOccasionGuessed, setDraftOccasionGuessed] = useState(false)
+  const [draftHoliday, setDraftHoliday] = useState(null)
+  const [draftHolidayGuessed, setDraftHolidayGuessed] = useState(false)
   const [draftTaxonomyId, setDraftTaxonomyId] = useState(null)
   const [draftTaxonomyLabel, setDraftTaxonomyLabel] = useState('')
   const [creatingDraft, setCreatingDraft] = useState(false)
@@ -145,6 +169,15 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       const categoryDefaults = getCategoryDefaults(data.taxonomyId ?? null, null)
       setDraftWhoMade(categoryDefaults?.whoMade ?? data.whoMade ?? 'i_did')
       setDraftIsSupply(categoryDefaults?.isSupply ?? data.isSupply ?? false)
+      // Guessed fresh from THIS listing's own title/description — never
+      // carried over from whatever was loaded before. A guess of null
+      // (no confident keyword match) leaves the field blank rather than
+      // marking it "guessed" with nothing in it.
+      const guesses = guessOccasionAndHoliday(data.title, data.description)
+      setDraftOccasion(guesses.occasion)
+      setDraftOccasionGuessed(Boolean(guesses.occasion))
+      setDraftHoliday(guesses.holiday)
+      setDraftHolidayGuessed(Boolean(guesses.holiday))
     } catch (err) {
       setError(err.message)
     } finally {
@@ -328,6 +361,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
             name: photo.name,
             altText: photo.altText,
           })),
+          properties: buildBalloonProperties(draftTaxonomyId),
         }),
       })
       const data = await response.json()
@@ -501,6 +535,28 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     ? getBalloonCategorySet(detectedBalloonMaterial)
     : null
 
+  // Materials/Occasion/Holiday for a single draft going to taxonomyId —
+  // gated to the 4 categories this feature actually verified property
+  // IDs/values for (isKnownBalloonCategory); anywhere else, these are
+  // left off entirely rather than risking an unverified property_id.
+  // draftOccasion/draftHoliday come from the visible, editable review-
+  // form dropdowns above — never a value the seller hasn't seen.
+  const buildBalloonProperties = (taxonomyId) => {
+    if (!isKnownBalloonCategory(taxonomyId)) return []
+    const properties = []
+    const materialProperty = detectedBalloonMaterial
+      ? getMaterialProperty(taxonomyId, detectedBalloonMaterial)
+      : null
+    if (materialProperty) properties.push(materialProperty)
+    if (draftOccasion) {
+      properties.push({ propertyId: OCCASION_PROPERTY_ID, valueIds: [draftOccasion.id], values: [draftOccasion.name] })
+    }
+    if (draftHoliday) {
+      properties.push({ propertyId: HOLIDAY_PROPERTY_ID, valueIds: [draftHoliday.id], values: [draftHoliday.name] })
+    }
+    return properties
+  }
+
   // Creates one draft per category in balloonCategorySet — same title/
   // description/tags/quantity/price/shipping/readiness/dimensions
   // carried over exactly like the single Draft button above, but a
@@ -542,6 +598,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
             itemWeightUnit: listing.itemWeightUnit,
             itemDimensionsUnit: listing.itemDimensionsUnit,
             images: [],
+            properties: buildBalloonProperties(category.taxonomyId),
           }),
         })
         const data = await response.json()
@@ -981,6 +1038,54 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                     </select>
                     {getCategoryDefaults(draftTaxonomyId, draftTaxonomyLabel) && (
                       <p className="subhead">Auto-set for this category — change it if it's wrong.</p>
+                    )}
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="draft-occasion">Occasion</label>
+                    <select
+                      id="draft-occasion"
+                      value={draftOccasion?.id ?? ''}
+                      onChange={(event) => {
+                        const selected =
+                          OCCASION_VALUES.find((v) => String(v.id) === event.target.value) || null
+                        setDraftOccasion(selected)
+                        setDraftOccasionGuessed(false)
+                      }}
+                    >
+                      <option value="">Not set</option>
+                      {OCCASION_VALUES.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name}
+                        </option>
+                      ))}
+                    </select>
+                    {draftOccasion && draftOccasionGuessed && (
+                      <span className="guessed-badge">Guessed — please review</span>
+                    )}
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="draft-holiday">Holiday</label>
+                    <select
+                      id="draft-holiday"
+                      value={draftHoliday?.id ?? ''}
+                      onChange={(event) => {
+                        const selected =
+                          HOLIDAY_VALUES.find((v) => String(v.id) === event.target.value) || null
+                        setDraftHoliday(selected)
+                        setDraftHolidayGuessed(false)
+                      }}
+                    >
+                      <option value="">Not set</option>
+                      {HOLIDAY_VALUES.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name}
+                        </option>
+                      ))}
+                    </select>
+                    {draftHoliday && draftHolidayGuessed && (
+                      <span className="guessed-badge">Guessed — please review</span>
                     )}
                   </div>
 
