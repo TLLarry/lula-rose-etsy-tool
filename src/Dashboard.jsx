@@ -481,24 +481,44 @@ function Dashboard({ password, onRevampTask }) {
           const newListings = rows.filter((row) => row.movement === 'New').slice(0, 5)
           const dropped = rows.filter((row) => row.movement === 'Dropped').slice(0, 5)
 
-          if (rows.length === 0) {
-            return (
-              <p className="subhead">
-                Not enough sales history yet to compare {quarterComparison.previousQuarter}{' '}
-                {quarterComparison.previousYear} to {quarterComparison.currentQuarter}{' '}
-                {quarterComparison.currentYear} — check back as more of this quarter fills in.
-              </p>
-            )
-          }
+          const grossChangeText =
+            quarterComparison.dailyGrossChangePercent != null
+              ? `${quarterComparison.dailyGrossChangePercent >= 0 ? '+' : ''}${(quarterComparison.dailyGrossChangePercent * 100).toFixed(0)}%`
+              : 'n/a'
+          const viewsChangeText =
+            quarterComparison.dailyViewsChangePercent != null
+              ? `${quarterComparison.dailyViewsChangePercent >= 0 ? '+' : ''}${(quarterComparison.dailyViewsChangePercent * 100).toFixed(0)}%`
+              : 'n/a'
 
-          const renderGroup = (title, groupRows, formatChange) =>
+          const renderGroup = (title, groupRows, formatChange, showAction) =>
             groupRows.length > 0 && (
               <div className="competitor-gap-section" key={title}>
                 <h3>{title}</h3>
                 <ul className="competitor-gap-list">
                   {groupRows.map((row) => (
-                    <li key={row.listingId}>
-                      {row.title} {formatChange(row)}
+                    <li className="dashboard-task-row" key={row.listingId}>
+                      <p className="dashboard-task-text">
+                        {row.title} {formatChange(row)}
+                      </p>
+                      {showAction && row.etsyListingId && (
+                        <div className="dashboard-task-actions">
+                          <button
+                            type="button"
+                            className="revamp-button"
+                            onClick={() =>
+                              onRevampTask({
+                                taskKey: `revamp-${row.listingId}`,
+                                type: 'revamp',
+                                etsyListingId: row.etsyListingId,
+                                listingId: row.listingId,
+                                listingTitle: row.title,
+                              })
+                            }
+                          >
+                            Revamp Now
+                          </button>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -508,24 +528,62 @@ function Dashboard({ password, onRevampTask }) {
           return (
             <>
               <p className="subhead">
-                {quarterComparison.previousQuarter} {quarterComparison.previousYear} vs.{' '}
-                {quarterComparison.currentQuarter} {quarterComparison.currentYear}, by units sold.
+                {quarterComparison.previousQuarter} {quarterComparison.previousYear} (
+                {quarterComparison.previousDaysElapsed} days) vs. {quarterComparison.currentQuarter}{' '}
+                {quarterComparison.currentYear} ({quarterComparison.currentDaysElapsed} days so far) —
+                daily averages, so a still-in-progress quarter isn't compared unfairly against a
+                finished one.
               </p>
-              {renderGroup(
-                'Climbing',
-                climbing,
-                (row) => `— ${row.previousUnits} → ${row.currentUnits} units`
-              )}
-              {renderGroup(
-                'Falling',
-                falling,
-                (row) => `— ${row.previousUnits} → ${row.currentUnits} units`
-              )}
-              {renderGroup('New this quarter', newListings, (row) => `— ${row.currentUnits} units`)}
-              {renderGroup(
-                'Dropped since last quarter',
-                dropped,
-                (row) => `— had ${row.previousUnits} units last quarter`
+              <div className="summary-cards dashboard-trend-summary">
+                <div className="summary-card">
+                  <p className="summary-card-label">Gross Sales / Day</p>
+                  <p className="summary-card-value">{formatMoney(quarterComparison.currentDailyGrossCents)}</p>
+                  <p className="summary-card-note">
+                    {formatMoney(quarterComparison.previousDailyGrossCents)}/day last quarter (
+                    {grossChangeText})
+                  </p>
+                </div>
+                <div className="summary-card">
+                  <p className="summary-card-label">Traffic (Views) / Day</p>
+                  <p className="summary-card-value">{quarterComparison.currentDailyViews.toFixed(1)}</p>
+                  <p className="summary-card-note">
+                    {quarterComparison.previousDailyViews.toFixed(1)}/day last quarter ({viewsChangeText})
+                  </p>
+                </div>
+              </div>
+
+              {rows.length === 0 ? (
+                <p className="subhead">
+                  Not enough sales history yet to compare individual listings — check back as more
+                  of this quarter fills in.
+                </p>
+              ) : (
+                <>
+                  {renderGroup(
+                    'Climbing',
+                    climbing,
+                    (row) => `— ${row.previousUnits} → ${row.currentUnits} units`,
+                    false
+                  )}
+                  {renderGroup(
+                    'Falling',
+                    falling,
+                    (row) => `— ${row.previousUnits} → ${row.currentUnits} units`,
+                    true
+                  )}
+                  {renderGroup(
+                    'New this quarter',
+                    newListings,
+                    (row) => `— ${row.currentUnits} units`,
+                    false
+                  )}
+                  {renderGroup(
+                    'Dropped since last quarter',
+                    dropped,
+                    (row) => `— had ${row.previousUnits} units last quarter`,
+                    true
+                  )}
+                </>
               )}
             </>
           )

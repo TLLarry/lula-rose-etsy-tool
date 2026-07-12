@@ -14,6 +14,7 @@ import {
   getListingsCreatedSince,
   getListingStatsForDateRange,
   getShopListings,
+  getShopListingById,
   saveEtsyCoachFlag,
   getLatestEtsyCoachFlags,
   checkAppPassword,
@@ -21,6 +22,7 @@ import {
 import {
   getQuarterForDate,
   quarterLabel,
+  dateRangeForQuarter,
   getPreviousQuarter,
   getListingStatsForQuarter,
   compareQuarters,
@@ -296,9 +298,37 @@ function createEtsyCoachFlagsHandler(env, passwordsMatch) {
   }
 }
 
+// Actual days counted so far in a quarter, not the quarter's full
+// length — critical for the CURRENT quarter specifically, since
+// comparing a full previous quarter's total against a barely-started
+// current quarter's total would look like a huge, false decline. Capped
+// at the quarter's real end date for a completed previous quarter.
+function daysElapsedInQuarter(year, quarter, today) {
+  const { startDate, endDate } = dateRangeForQuarter(year, quarter)
+  const start = new Date(`${startDate}T00:00:00`)
+  const end = new Date(`${endDate}T00:00:00`)
+  const effectiveEnd = today < end ? today : end
+  const days = Math.round((effectiveEnd - start) / (24 * 60 * 60 * 1000)) + 1
+  return Math.max(days, 1)
+}
+
+function sumField(rows, field) {
+  return rows.reduce((sum, row) => sum + (row[field] ?? 0), 0)
+}
+
+function safeDailyChangePercent(current, previous) {
+  if (previous === 0) return current === 0 ? 0 : null
+  return (current - previous) / previous
+}
+
 // GET /api/etsy-coach/quarter-comparison — live (not persisted) current-
 // vs-previous-quarter listing comparison, same Climbing/Falling/Steady/
 // New/Dropped vocabulary analysis.js already uses for keyword trends.
+// Also returns shop-wide gross sales and traffic (views) as a DAILY
+// average for each period, not a raw quarter total — a raw total would
+// make the current, still-in-progress quarter look like it's collapsed
+// compared to a full previous quarter purely because fewer days have
+// passed, not because anything's actually declined.
 function createQuarterComparisonHandler(env, passwordsMatch) {
   return (req, res) => {
     if (req.method !== 'GET') {
@@ -310,10 +340,29 @@ function createQuarterComparisonHandler(env, passwordsMatch) {
     if (!checkAppPassword(req, res, env, passwordsMatch)) return
 
     try {
-      const { year, quarter } = getQuarterForDate(new Date())
+      const today = new Date()
+      const { year, quarter } = getQuarterForDate(today)
       const previous = getPreviousQuarter(year, quarter)
       const currentRows = getListingStatsForQuarter(year, quarter)
       const previousRows = getListingStatsForQuarter(previous.year, previous.quarter)
+
+      const currentDaysElapsed = daysElapsedInQuarter(year, quarter, today)
+      const previousDaysElapsed = daysElapsedInQuarter(previous.year, previous.quarter, today)
+      const currentDailyGrossCents = Math.round(sumField(currentRows, 'revenueCents') / currentDaysElapsed)
+      const previousDailyGrossCents = Math.round(
+        sumField(previousRows, 'revenueCents') / previousDaysElapsed
+      )
+      const currentDailyViews = sumField(currentRows, 'viewsGained') / currentDaysElapsed
+      const previousDailyViews = sumField(previousRows, 'viewsGained') / previousDaysElapsed
+
+      // Every row also carries the real Etsy listing id, joined from
+      // shop_listings — the frontend needs this to offer a real
+      // "Revamp Now" action directly on a Falling/Dropped row, not just
+      // display it as inert text.
+      const rows = compareQuarters(currentRows, previousRows).map((row) => ({
+        ...row,
+        etsyListingId: getShopListingById(row.listingId)?.etsy_listing_id ?? null,
+      }))
 
       res.end(
         JSON.stringify({
@@ -322,7 +371,15 @@ function createQuarterComparisonHandler(env, passwordsMatch) {
           currentYear: year,
           previousQuarter: quarterLabel(previous.quarter),
           previousYear: previous.year,
-          rows: compareQuarters(currentRows, previousRows),
+          currentDaysElapsed,
+          previousDaysElapsed,
+          currentDailyGrossCents,
+          previousDailyGrossCents,
+          dailyGrossChangePercent: safeDailyChangePercent(currentDailyGrossCents, previousDailyGrossCents),
+          currentDailyViews,
+          previousDailyViews,
+          dailyViewsChangePercent: safeDailyChangePercent(currentDailyViews, previousDailyViews),
+          rows,
         })
       )
     } catch (err) {
