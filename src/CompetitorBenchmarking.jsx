@@ -339,7 +339,7 @@ function CompetitorShopCard({
             </div>
             <div className="summary-card">
               <p className="summary-card-label">Sales (approximate)</p>
-              <p className="summary-card-value">—</p>
+              <p className="summary-card-value">{shop.totalSales ?? '—'}</p>
               <p className="summary-card-note">{formatDiff(shop.newSalesSinceLastCheck)}</p>
             </div>
             <div className="summary-card">

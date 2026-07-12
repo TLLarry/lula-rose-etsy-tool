@@ -1261,6 +1261,13 @@ mark {
   color: var(--text-h);
 }
 
+/* Listing links inside best-sellers/reviews/new-listings/price-comparison
+   rows were left as unstyled <a> tags, which browsers default to blue —
+   never an intentional color choice. Same fix as .draft-image-errors a. */
+.competitor-gap-list a {
+  color: var(--text-h);
+}
+
 .competitor-link-row {
   display: flex;
   align-items: center;

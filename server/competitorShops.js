@@ -417,6 +417,7 @@ function buildCompetitorShopView(shopRow) {
     numFavorers: latest.num_favorers,
     reviewAverage: latest.review_average,
     reviewCount: latest.review_count,
+    totalSales: latest.transaction_sold_count,
     newSalesSinceLastCheck: previous ? latest.transaction_sold_count - previous.transaction_sold_count : null,
     newReviewsSinceLastCheck: previous ? latest.review_count - previous.review_count : null,
     newListings,
