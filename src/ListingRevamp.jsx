@@ -97,12 +97,29 @@ function formatGeoDescription(body, specs, specLines, faq) {
   return sections.filter(Boolean).join('\n\n')
 }
 
-function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }) {
+function ListingRevamp({
+  password,
+  pendingListingUrl,
+  onPendingListingConsumed,
+  autoRevamp,
+  autoRevampTaskKey,
+  autoRevampListingId,
+}) {
   const [listingUrl, setListingUrl] = useState('')
   const [competitorListingUrl, setCompetitorListingUrl] = useState('')
   const [loading, setLoading] = useState(false)
   const [listing, setListing] = useState(null)
   const [error, setError] = useState('')
+
+  // Dashboard task hand-off: null means no auto-run in progress (the
+  // normal, fully-manual flow every other entry point still uses).
+  // 'loading' -> 'rewriting' -> 'drafting' -> 'done', each step
+  // triggered by the PREVIOUS step's own real state actually updating
+  // (see the effect chain below) rather than chaining these calls
+  // directly one after another, which would read stale pre-update
+  // state from the same closure (listing/rewriteResult wouldn't be set
+  // yet on the very next line after calling their own setters).
+  const [autoRevampStage, setAutoRevampStage] = useState(null)
 
   // Competitor listing — loaded via a separate endpoint
   // (/api/load-competitor-listing) that skips the "must belong to your
@@ -643,12 +660,52 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     if (!pendingListingUrl) return
     setListingUrl(pendingListingUrl)
     handleLoadListing(pendingListingUrl)
+    if (autoRevamp) setAutoRevampStage('loading')
     onPendingListingConsumed()
     // Only pendingListingUrl should re-fire this — handleLoadListing
     // itself changes on every render (it closes over listingUrl) and
     // isn't a meaningful dependency here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingListingUrl])
+
+  // Dashboard task hand-off, continued: each step only fires once the
+  // PREVIOUS step's real result has landed in state, matching the exact
+  // same manual flow (Load -> Revamp My Listing -> Create Draft) a
+  // person clicking through by hand would produce — same functions,
+  // same generated content, just triggered automatically instead of by
+  // a click. Guarded by the stage flag so this never fires from
+  // unrelated state changes during ordinary manual use.
+  useEffect(() => {
+    if (autoRevampStage === 'loading' && listing) {
+      setAutoRevampStage('rewriting')
+      handleRewriteListing()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRevampStage, listing])
+
+  useEffect(() => {
+    if (autoRevampStage === 'rewriting' && rewriteResult) {
+      setAutoRevampStage('drafting')
+      handleCreateDraft()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRevampStage, rewriteResult])
+
+  useEffect(() => {
+    if (autoRevampStage !== 'drafting' || !draftCreateResult) return
+    setAutoRevampStage('done')
+    if (!autoRevampTaskKey || !autoRevampListingId) return
+    // Starts this listing's 30-day revamp cooldown and marks the
+    // Dashboard task done — fire-and-forget: the draft itself already
+    // succeeded (that's what set draftCreateResult), so a failure here
+    // shouldn't be shown as an error about the revamp itself.
+    fetch('/api/dashboard-tasks/mark-revamp-done', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+      body: JSON.stringify({ taskKey: autoRevampTaskKey, listingId: autoRevampListingId }),
+    }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRevampStage, draftCreateResult])
 
   const handleCsvFileSelected = (event) => {
     const selected = event.target.files?.[0] || null

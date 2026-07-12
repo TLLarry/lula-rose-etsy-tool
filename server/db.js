@@ -79,6 +79,7 @@ const TABLE_NAMES = [
   'competitor_shops',
   'competitor_shop_snapshots',
   'competitor_price_links',
+  'dashboard_task_actions',
   'shop_listings',
   'daily_listing_stats',
   'etsy_oauth_tokens',
@@ -460,6 +461,22 @@ function initializeSchema(realDbInstance) {
   );
 
   CREATE INDEX IF NOT EXISTS idx_competitor_price_links_shop ON competitor_price_links(competitor_shop_id);
+
+  -- Dashboard "This Week" task engine's memory — one row per task
+  -- INSTANCE once it's been acted on or dismissed (task_key is a stable,
+  -- deterministic id like "price-test-<priceLinkId>" or
+  -- "revamp-<listingId>", not an autoincrement the caller doesn't
+  -- control). A recently-actioned task_key is filtered out of the next
+  -- computed task list (see server/dashboardTasks.js) so completing or
+  -- dismissing something doesn't just show it right back again —
+  -- there's deliberately no separate "undo"/reappear-if-worse logic yet
+  -- in this first version; a task_key simply drops out for 7 days.
+  CREATE TABLE IF NOT EXISTS dashboard_task_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `)
 
   // SQLite has no `ADD COLUMN IF NOT EXISTS` — this checks PRAGMA
@@ -476,6 +493,10 @@ function initializeSchema(realDbInstance) {
   // baseline," never estimating a delta against data that doesn't exist.
   ensureColumn(realDbInstance, 'shop_listings', 'last_known_views', 'INTEGER')
   ensureColumn(realDbInstance, 'shop_listings', 'last_known_favorites', 'INTEGER')
+  // Enforces the "only revamp a listing every 30 days" rule across
+  // every revamp path (Dashboard task, single-listing, section batch) —
+  // set once a revamp actually completes, not on load/preview.
+  ensureColumn(realDbInstance, 'shop_listings', 'last_revamped_at', 'TEXT')
 }
 
 function ensureColumn(realDbInstance, table, column, definition) {
@@ -691,6 +712,31 @@ function updateCompetitorPriceLinkPrices(id, { competitorPriceCents, myPriceCent
        SET previous_competitor_price_cents = ?, last_competitor_price_cents = ?, last_my_price_cents = ?, last_checked_at = datetime('now')
      WHERE id = ?`
   ).run(existing?.last_competitor_price_cents ?? null, competitorPriceCents ?? null, myPriceCents ?? null, id)
+}
+
+// --- dashboard_task_actions: "This Week" task engine's memory ---
+
+function getRecentDashboardTaskActionKeys(sinceIsoDatetime) {
+  return new Set(
+    db
+      .prepare(`SELECT task_key FROM dashboard_task_actions WHERE created_at >= ?`)
+      .all(sinceIsoDatetime)
+      .map((row) => row.task_key)
+  )
+}
+
+// Idempotent on task_key — re-completing/re-dismissing the same task
+// instance just refreshes when it was last actioned, rather than piling
+// up duplicate rows.
+function recordDashboardTaskAction(taskKey, status) {
+  db.prepare(
+    `INSERT INTO dashboard_task_actions (task_key, status, created_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(task_key) DO UPDATE SET status = excluded.status, created_at = excluded.created_at`
+  ).run(taskKey, status)
+}
+
+function updateListingLastRevampedAt(listingId) {
+  db.prepare(`UPDATE shop_listings SET last_revamped_at = datetime('now') WHERE id = ?`).run(listingId)
 }
 
 // --- app_settings: small key-value store for live-adjustable thresholds ---
@@ -1532,6 +1578,9 @@ export {
   addCompetitorPriceLink,
   removeCompetitorPriceLink,
   updateCompetitorPriceLinkPrices,
+  getRecentDashboardTaskActionKeys,
+  recordDashboardTaskAction,
+  updateListingLastRevampedAt,
   getSetting,
   setSetting,
   getAllSettings,

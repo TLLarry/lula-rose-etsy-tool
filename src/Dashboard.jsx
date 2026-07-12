@@ -10,7 +10,14 @@ function formatMoney(cents) {
 // Top 3 / Bottom 3 Performing Listings are both wired to real data (see
 // loadTopSellers/loadBottomPerformers below) — ranked by units sold in
 // the last 30 days via server/etsyCoach.js.
-function Dashboard({ password }) {
+function Dashboard({ password, onRevampTask }) {
+  const [tasks, setTasks] = useState([])
+  const [tasksLoading, setTasksLoading] = useState(true)
+  const [tasksError, setTasksError] = useState('')
+  const [completingTaskKey, setCompletingTaskKey] = useState(null)
+  const [dismissingTaskKey, setDismissingTaskKey] = useState(null)
+  const [taskActionError, setTaskActionError] = useState('')
+
   const [topSellers, setTopSellers] = useState([])
   const [minUnitsThreshold, setMinUnitsThreshold] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -37,6 +44,71 @@ function Dashboard({ password }) {
   // true (e.g. the sales jump that prompted it is now last week's
   // history) without needing to track that here.
   const [dismissedIdeaIds, setDismissedIdeaIds] = useState([])
+
+  const loadTasks = () => {
+    setTasksLoading(true)
+    setTasksError('')
+    return fetch('/api/dashboard-tasks', { headers: { 'x-app-password': password } })
+      .then(async (response) => {
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || 'Failed to load this week\'s tasks.')
+        return body
+      })
+      .then((body) => setTasks(body.tasks))
+      .catch((err) => setTasksError(err.message))
+      .finally(() => setTasksLoading(false))
+  }
+
+  useEffect(() => {
+    loadTasks()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleCompleteTask = async (task) => {
+    setCompletingTaskKey(task.taskKey)
+    setTaskActionError('')
+    try {
+      const response = await fetch('/api/dashboard-tasks/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify(task),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to complete that task.')
+      setTasks(data.tasks)
+    } catch (err) {
+      setTaskActionError(err.message)
+    } finally {
+      setCompletingTaskKey(null)
+    }
+  }
+
+  const handleDismissTask = async (task) => {
+    setDismissingTaskKey(task.taskKey)
+    setTaskActionError('')
+    try {
+      const response = await fetch('/api/dashboard-tasks/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({ taskKey: task.taskKey }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to dismiss that task.')
+      setTasks(data.tasks)
+    } catch (err) {
+      setTaskActionError(err.message)
+    } finally {
+      setDismissingTaskKey(null)
+    }
+  }
+
+  const handleTaskAction = (task) => {
+    if (task.type === 'revamp') {
+      onRevampTask(task)
+      return
+    }
+    handleCompleteTask(task)
+  }
 
   const loadTopSellers = () => {
     setLoading(true)
@@ -154,6 +226,47 @@ function Dashboard({ password }) {
     <section id="dashboard-page">
       <h1>Welcome back</h1>
       <p className="subhead">Here's your shop at a glance.</p>
+
+      <div className="dashboard-performers-box dashboard-tasks-hero">
+        <h2>This Week</h2>
+        <p className="subhead">Real tasks, not just numbers — each one is a single click to complete.</p>
+
+        {tasksError && <p className="error">{tasksError}</p>}
+        {taskActionError && <p className="error">{taskActionError}</p>}
+        {tasksLoading && <p className="subhead">Loading…</p>}
+
+        {!tasksLoading && !tasksError && tasks.length === 0 && (
+          <p className="subhead">Nothing needs your attention right now — check back after the next data pull.</p>
+        )}
+
+        {!tasksLoading && tasks.length > 0 && (
+          <ul className="dashboard-task-list">
+            {tasks.map((task) => (
+              <li key={task.taskKey} className="dashboard-task-row">
+                <p className="dashboard-task-text">{task.text}</p>
+                <div className="dashboard-task-actions">
+                  <button
+                    type="button"
+                    className="revamp-button"
+                    onClick={() => handleTaskAction(task)}
+                    disabled={completingTaskKey === task.taskKey}
+                  >
+                    {completingTaskKey === task.taskKey ? 'Working…' : task.actionLabel}
+                  </button>
+                  <button
+                    type="button"
+                    className="competitor-change-link"
+                    onClick={() => handleDismissTask(task)}
+                    disabled={dismissingTaskKey === task.taskKey}
+                  >
+                    {dismissingTaskKey === task.taskKey ? 'Dismissing…' : 'Dismiss'}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <WeeklyReport password={password} />
 

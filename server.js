@@ -52,6 +52,12 @@ import {
 } from './server/etsyCoach.js'
 import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
 import { createBackfillShopHistoryHandler } from './server/etsyShopStats.js'
+import {
+  createDashboardTasksHandler,
+  createDashboardTaskDismissHandler,
+  createDashboardTaskCompleteHandler,
+  createMarkRevampDoneHandler,
+} from './server/dashboardTasks.js'
 import { createWeeklyReportHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
@@ -142,6 +148,13 @@ app.use('/api/bottom-performers', createBottomPerformersHandler(env, passwordsMa
 app.use('/api/app-settings', createAppSettingsHandler(env, passwordsMatch))
 app.use('/api/run-nightly-sync', createRunNightlySyncHandler(env))
 app.use('/api/backfill-shop-history', createBackfillShopHistoryHandler(env, passwordsMatch))
+// Must be registered before '/api/dashboard-tasks' — app.use matches by
+// path prefix, same reasoning as the other prefix-collision routes
+// above.
+app.use('/api/dashboard-tasks/dismiss', createDashboardTaskDismissHandler(env, passwordsMatch))
+app.use('/api/dashboard-tasks/complete', createDashboardTaskCompleteHandler(env, passwordsMatch))
+app.use('/api/dashboard-tasks/mark-revamp-done', createMarkRevampDoneHandler(env, passwordsMatch))
+app.use('/api/dashboard-tasks', createDashboardTasksHandler(env, passwordsMatch))
 app.use('/api/nightly-sync-log', createNightlySyncLogHandler(env, passwordsMatch))
 app.use('/api/weekly-report', createWeeklyReportHandler(env, passwordsMatch))
 app.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))

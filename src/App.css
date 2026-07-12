@@ -867,6 +867,51 @@ mark {
   gap: 8px;
 }
 
+/* The "This Week" task engine — same .dashboard-performers-box card as
+   everything else on this page, just given more padding/weight since
+   it's the first thing on the Dashboard now, not a new color. */
+.dashboard-tasks-hero {
+  padding: 24px;
+}
+
+.dashboard-task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dashboard-task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.dashboard-task-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.dashboard-task-text {
+  margin: 0;
+  color: var(--text-h);
+  flex: 1;
+  min-width: 200px;
+}
+
+.dashboard-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
 .dashboard-performer-button {
   width: 100%;
   text-align: left;

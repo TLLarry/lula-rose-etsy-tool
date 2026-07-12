@@ -26,9 +26,27 @@ function App() {
   // ListingRevamp's own effect, then cleared here — the standard lifted-
   // state ownership pattern this app already uses for `password`.
   const [pendingRevampListingUrl, setPendingRevampListingUrl] = useState('')
+  // Dashboard task hand-off only — Low Performers' own "Revamp" button
+  // still just auto-loads (autoRevamp stays false there), unchanged.
+  // The Dashboard's "Revamp Now" task additionally auto-runs the whole
+  // rewrite-and-draft pipeline, so it needs the task's own key (to mark
+  // it done afterward) and the listing's internal id (to start its
+  // 30-day cooldown) riding along with the same URL hand-off.
+  const [pendingRevampAutoRun, setPendingRevampAutoRun] = useState(false)
+  const [pendingRevampTaskKey, setPendingRevampTaskKey] = useState(null)
+  const [pendingRevampInternalListingId, setPendingRevampInternalListingId] = useState(null)
 
   const handleRevampHandoff = (etsyListingId) => {
     setPendingRevampListingUrl(`https://www.etsy.com/listing/${etsyListingId}`)
+    setPendingRevampAutoRun(false)
+    setActivePage('listing-revamp')
+  }
+
+  const handleDashboardTaskRevampHandoff = (task) => {
+    setPendingRevampListingUrl(`https://www.etsy.com/listing/${task.etsyListingId}`)
+    setPendingRevampAutoRun(true)
+    setPendingRevampTaskKey(task.taskKey)
+    setPendingRevampInternalListingId(task.listingId)
     setActivePage('listing-revamp')
   }
 
@@ -47,7 +65,9 @@ function App() {
     <div id="app-layout">
       <Sidebar activePage={activePage} onNavigate={setActivePage} />
       <main id="main-content">
-        {activePage === 'dashboard' && <Dashboard password={password} />}
+        {activePage === 'dashboard' && (
+          <Dashboard password={password} onRevampTask={handleDashboardTaskRevampHandoff} />
+        )}
         {activePage === 'listing-tool' && <EtsyTool />}
         {activePage === 'keyword-analysis' && <KeywordAnalysis password={password} />}
         {activePage === 'competitors' && <CompetitorBenchmarking password={password} />}
@@ -58,6 +78,9 @@ function App() {
             password={password}
             pendingListingUrl={pendingRevampListingUrl}
             onPendingListingConsumed={() => setPendingRevampListingUrl('')}
+            autoRevamp={pendingRevampAutoRun}
+            autoRevampTaskKey={pendingRevampTaskKey}
+            autoRevampListingId={pendingRevampInternalListingId}
           />
         )}
         {activePage === 'low-performers' && (

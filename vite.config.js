@@ -49,6 +49,12 @@ import {
 } from './server/etsyCoach.js'
 import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
 import { createBackfillShopHistoryHandler } from './server/etsyShopStats.js'
+import {
+  createDashboardTasksHandler,
+  createDashboardTaskDismissHandler,
+  createDashboardTaskCompleteHandler,
+  createMarkRevampDoneHandler,
+} from './server/dashboardTasks.js'
 import { createWeeklyReportHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
@@ -160,6 +166,24 @@ function etsyTitleWriterPlugin(env) {
       server.middlewares.use(
         '/api/backfill-shop-history',
         createBackfillShopHistoryHandler(env, passwordsMatch)
+      )
+      // Must be registered before '/api/dashboard-tasks' — connect
+      // middleware matches by path prefix, same reasoning as server.js.
+      server.middlewares.use(
+        '/api/dashboard-tasks/dismiss',
+        createDashboardTaskDismissHandler(env, passwordsMatch)
+      )
+      server.middlewares.use(
+        '/api/dashboard-tasks/complete',
+        createDashboardTaskCompleteHandler(env, passwordsMatch)
+      )
+      server.middlewares.use(
+        '/api/dashboard-tasks/mark-revamp-done',
+        createMarkRevampDoneHandler(env, passwordsMatch)
+      )
+      server.middlewares.use(
+        '/api/dashboard-tasks',
+        createDashboardTasksHandler(env, passwordsMatch)
       )
       server.middlewares.use(
         '/api/nightly-sync-log',
