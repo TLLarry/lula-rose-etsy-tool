@@ -51,8 +51,9 @@
 import { getValidAccessToken } from './etsyOAuth.js'
 import { checkAppPassword } from './db.js'
 import { readJsonBody, RequestError, validateImages } from './listingApi.js'
-import { uploadEtsyListingImages } from './etsyListingImages.js'
+import { uploadEtsyListingImages, fetchSourceImagesForUpload } from './etsyListingImages.js'
 import { applyEtsyListingProperties } from './etsyListingProperties.js'
+import { carryOverListingVideo } from './etsyListingVideo.js'
 
 const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 
@@ -79,6 +80,8 @@ function validateDraftListingInput(body) {
     itemDimensionsUnit,
     images: rawImages,
     properties: rawProperties,
+    sourceImages: rawSourceImages,
+    sourceVideo: rawSourceVideo,
   } = body || {}
 
   if (typeof title !== 'string' || !title.trim()) {
@@ -155,6 +158,23 @@ function validateDraftListingInput(body) {
       )
     : []
 
+  // The source listing's OWN images/video, carried over automatically
+  // when the seller hasn't manually uploaded anything different (see
+  // the handler below) — loosely validated, same "drop anything
+  // malformed rather than fail the draft" reasoning as properties
+  // above, since this is enrichment, not a required field.
+  const sourceImages = Array.isArray(rawSourceImages)
+    ? rawSourceImages.filter((image) => image && typeof image.url === 'string' && image.url.trim())
+    : []
+  const sourceVideo =
+    rawSourceVideo &&
+    typeof rawSourceVideo === 'object' &&
+    Number.isInteger(rawSourceVideo.videoId) &&
+    typeof rawSourceVideo.url === 'string' &&
+    rawSourceVideo.url.trim()
+      ? { videoId: rawSourceVideo.videoId, url: rawSourceVideo.url }
+      : null
+
   return {
     title: title.trim(),
     description,
@@ -179,6 +199,8 @@ function validateDraftListingInput(body) {
     // outcome, not an error.
     images: validateImages(rawImages),
     properties,
+    sourceImages,
+    sourceVideo,
   }
 }
 
@@ -301,8 +323,9 @@ async function createEtsyDraftListing(env, listingInput) {
 
 // POST /api/create-draft-listing, body { title, description, tags,
 // quantity, price, whoMade, whenMade, isSupply?, taxonomyId,
-// shippingProfileId, readinessStateId, images?, properties? }. Same
-// x-app-password auth as every other endpoint.
+// shippingProfileId, readinessStateId, images?, properties?,
+// sourceImages?, sourceVideo? }. Same x-app-password auth as every
+// other endpoint.
 function createDraftListingHandler(env, passwordsMatch) {
   return async (req, res) => {
     if (req.method !== 'POST') {
@@ -318,6 +341,20 @@ function createDraftListingHandler(env, passwordsMatch) {
       const listingInput = validateDraftListingInput(rawBody)
       const result = await createEtsyDraftListing(env, listingInput)
 
+      // Manually-uploaded photos WIN when present — the seller
+      // deliberately chose different images for this draft, so those
+      // are what get used, not the source listing's own. Only when
+      // nothing was manually uploaded does this fall back to carrying
+      // the source listing's own images over automatically (fetched
+      // from their own public Etsy URLs and re-uploaded fresh — Etsy
+      // has no "reference an active image from another listing"
+      // capability the way it does for video, confirmed via research
+      // before writing this).
+      let imagesToUpload = listingInput.images
+      if (imagesToUpload.length === 0 && listingInput.sourceImages.length > 0) {
+        imagesToUpload = await fetchSourceImagesForUpload(listingInput.sourceImages)
+      }
+
       // The draft is real at this point regardless of what happens
       // next — a failed image upload is never treated as the whole
       // request failing, since there's nothing to roll back to (and no
@@ -325,8 +362,17 @@ function createDraftListingHandler(env, passwordsMatch) {
       // results ride along so the seller can see exactly which ones
       // made it and retry just the ones that didn't.
       let imageUpload = null
-      if (listingInput.images.length > 0) {
-        imageUpload = await uploadEtsyListingImages(env, result.listingId, listingInput.images)
+      if (imagesToUpload.length > 0) {
+        imageUpload = await uploadEtsyListingImages(env, result.listingId, imagesToUpload)
+      }
+
+      // No manual-upload alternative exists for video (no UI for it
+      // yet) — always carried over automatically when the source
+      // listing has one. Never fails the draft, same reasoning as
+      // images/properties.
+      let videoCarryOver = null
+      if (listingInput.sourceVideo) {
+        videoCarryOver = await carryOverListingVideo(env, result.listingId, listingInput.sourceVideo)
       }
 
       // Same non-fatal reasoning as image upload above — a rejected
@@ -339,7 +385,9 @@ function createDraftListingHandler(env, passwordsMatch) {
         propertiesResult = await applyEtsyListingProperties(env, result.listingId, listingInput.properties)
       }
 
-      res.end(JSON.stringify({ ok: true, ...result, imageUpload, propertiesResult }))
+      res.end(
+        JSON.stringify({ ok: true, ...result, imageUpload, videoCarryOver, propertiesResult })
+      )
     } catch (err) {
       res.statusCode = err.status || 500
       res.end(JSON.stringify({ error: err.message }))

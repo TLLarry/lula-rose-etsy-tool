@@ -50,7 +50,10 @@ function parseListingIdFromUrl(rawUrl) {
 // Etsy returns image objects in whatever order, each with a `rank` for
 // display order and several pre-sized URLs — url_fullxfull is the
 // largest, used here since this is a "confirm it's the right listing"
-// preview, not a thumbnail grid needing to stay small.
+// preview, not a thumbnail grid needing to stay small. altText carried
+// through too (confirmed present on the real field, sometimes null) —
+// needed so a carried-over image (Listing Revamp's draft-creation
+// carry-over) keeps its original alt text instead of losing it.
 function normalizeImages(rawImages) {
   if (!Array.isArray(rawImages)) return []
   return [...rawImages]
@@ -58,8 +61,24 @@ function normalizeImages(rawImages) {
     .map((image) => ({
       listingImageId: image.listing_image_id,
       url: image.url_fullxfull || image.url_570xN || image.url_170x135 || null,
+      altText: typeof image.alt_text === 'string' ? image.alt_text : null,
     }))
     .filter((image) => image.url)
+}
+
+// Confirmed live: a listing can have at most one video, and
+// includes=Videos on the same listings/{id} GET this file already makes
+// returns it alongside images — no extra round trip needed. Also
+// confirmed live against this shop's own real listings: the SAME
+// video_id legitimately appears on multiple different listings already
+// (not just previously-deleted-then-reassigned like images work), which
+// is what makes the cheap video_id-reference carry-over path
+// (server/etsyListingVideo.js) worth trying first.
+function normalizeVideo(rawVideos) {
+  if (!Array.isArray(rawVideos) || rawVideos.length === 0) return null
+  const video = rawVideos[0]
+  if (!video || typeof video.video_id !== 'number' || typeof video.video_url !== 'string') return null
+  return { videoId: video.video_id, url: video.video_url }
 }
 
 // Etsy returns price as a Money object on read — {amount, divisor,
@@ -90,7 +109,7 @@ function checkListingBelongsToShop(env, data) {
 }
 
 async function fetchEtsyListing(env, listingId) {
-  const response = await fetch(`${ETSY_API_BASE}/listings/${listingId}?includes=Images`, {
+  const response = await fetch(`${ETSY_API_BASE}/listings/${listingId}?includes=Images,Videos`, {
     headers: {
       'x-api-key': `${env.ETSY_API_KEY}:${env.ETSY_SHARED_SECRET}`,
     },
@@ -127,6 +146,7 @@ async function fetchEtsyListing(env, listingId) {
     // check across its own active listings).
     materials: Array.isArray(data.materials) ? data.materials : [],
     images: normalizeImages(data.images),
+    video: normalizeVideo(data.videos),
     url: typeof data.url === 'string' ? data.url : null,
     state: typeof data.state === 'string' ? data.state : null,
     // Lifetime cumulative counters, not a per-day feed — confirmed via a

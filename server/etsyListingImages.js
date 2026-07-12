@@ -87,4 +87,51 @@ async function uploadEtsyListingImages(env, listingId, images) {
   return { results, skippedForCapacity: images.length - capped.length }
 }
 
-export { MAX_LISTING_IMAGES, uploadEtsyListingImage, uploadEtsyListingImages }
+// Downloads a source listing's own image (its public i.etsystatic.com
+// URL, no auth needed) and reshapes it into the exact { data, mediaType,
+// name, altText } form uploadEtsyListingImage already expects — same
+// pipeline a freshly browser-uploaded photo goes through, just sourced
+// from Etsy's own CDN instead of the seller's file picker. Used for
+// Listing Revamp's draft-creation image carry-over.
+async function fetchSourceImageForUpload({ url, altText }, index) {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Failed to download source image ${index + 1} (${response.status})`)
+  }
+  const mediaType = response.headers.get('content-type') || 'image/jpeg'
+  const buffer = Buffer.from(await response.arrayBuffer())
+  return {
+    data: buffer.toString('base64'),
+    mediaType,
+    name: `carried-over-${index + 1}.jpg`,
+    altText: altText || null,
+  }
+}
+
+// Never throws for one bad image — same "don't lose the ones that
+// worked" reasoning as uploadEtsyListingImages itself. Caps at
+// MAX_LISTING_IMAGES up front so a source listing with more than 10
+// images (shouldn't happen, Etsy enforces the same cap on write, but
+// not necessarily on however it originally got that many) doesn't waste
+// downloads on images that would be rejected anyway.
+async function fetchSourceImagesForUpload(sourceImages) {
+  const capped = sourceImages.slice(0, MAX_LISTING_IMAGES)
+  const results = []
+  for (let i = 0; i < capped.length; i += 1) {
+    try {
+      results.push(await fetchSourceImageForUpload(capped[i], i))
+    } catch {
+      // Skip this one — the rest still carry over, and the seller can
+      // always add the missed one manually same as before this feature
+      // existed.
+    }
+  }
+  return results
+}
+
+export {
+  MAX_LISTING_IMAGES,
+  uploadEtsyListingImage,
+  uploadEtsyListingImages,
+  fetchSourceImagesForUpload,
+}

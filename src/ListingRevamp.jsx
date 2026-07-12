@@ -477,11 +477,15 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
             itemHeight: sourceListing.itemHeight,
             itemWeightUnit: sourceListing.itemWeightUnit,
             itemDimensionsUnit: sourceListing.itemDimensionsUnit,
-            // No images — same reasoning as the balloon multi-category
-            // duplication feature: nobody's pre-uploaded photos for an
-            // entire section's worth of drafts, so these ship image-
-            // less and the seller adds them per draft afterward.
+            // No manually-uploaded images here — there's no per-listing
+            // upload step in a section batch — but the source listing's
+            // own photos/video are carried over automatically below,
+            // same as the single-listing Draft flow. That's the whole
+            // point of automating this: the seller shouldn't have to
+            // re-add every image by hand across an entire section.
             images: [],
+            sourceImages: sourceListing.images,
+            sourceVideo: sourceListing.video,
             properties,
           }),
         })
@@ -791,6 +795,16 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
             name: photo.name,
             altText: photo.altText,
           })),
+          // Carried over automatically whenever the seller hasn't
+          // manually uploaded different photos above (images.length
+          // === 0 wins that check server-side) — a revamp changes the
+          // listing text, not what photos/video actually show the
+          // product, so losing them by default would mean re-adding
+          // every single one by hand after every draft. Covers both
+          // the single-listing Draft flow and Combine Both, since both
+          // funnel into this same handler/button.
+          sourceImages: listing.images,
+          sourceVideo: listing.video,
           properties: buildBalloonProperties(draftTaxonomyId),
         }),
       })
