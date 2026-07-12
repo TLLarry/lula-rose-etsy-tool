@@ -345,7 +345,7 @@ function buildCompetitorShopView(shopRow) {
   const { latest, previous } = getCompetitorShopSnapshots(shopRow.id)
   const priceLinks = listCompetitorPriceLinks(shopRow.id).map((link) => ({
     ...link,
-    my_listing_title: getShopListingById(link.my_listing_id)?.title || null,
+    my_listing_title: decodeHtmlEntities(getShopListingById(link.my_listing_id)?.title || '') || null,
   }))
 
   const base = {
@@ -624,7 +624,7 @@ function createShopListingsPickerHandler(env, passwordsMatch) {
     try {
       const listings = getShopListings().map((listing) => ({
         id: listing.id,
-        title: listing.title,
+        title: decodeHtmlEntities(listing.title),
         thumbnailUrl: listing.thumbnail_url,
       }))
       res.end(JSON.stringify({ ok: true, listings }))
