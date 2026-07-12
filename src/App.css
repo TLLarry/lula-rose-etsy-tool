@@ -1152,8 +1152,8 @@ mark {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  border: 1px solid var(--latte-border);
-  background: var(--latte);
+  border: 1px solid var(--border);
+  background: var(--bg);
   border-radius: 12px;
   padding: 14px 16px;
 }
@@ -1207,7 +1207,7 @@ mark {
 
 .competitor-tag-pill {
   background: var(--bg);
-  border: 1px solid var(--latte-border);
+  border: 1px solid var(--border);
   border-radius: 999px;
   padding: 3px 10px;
   font-size: 12px;
@@ -1220,13 +1220,13 @@ mark {
   margin: 0;
 }
 
-/* Tag-gap comparison — same latte card the rest of Day 23's competitor
-   card uses, just a distinct sub-section once a listing is linked. */
+/* Tag-gap comparison — a distinct sub-section within the (now white)
+   .competitor-card, same border color the card itself uses. */
 .competitor-gap-section {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border-top: 1px solid var(--latte-border);
+  border-top: 1px solid var(--border);
   padding-top: 12px;
 }
 
