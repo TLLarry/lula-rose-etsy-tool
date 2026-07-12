@@ -22,6 +22,7 @@
 import { checkAppPassword } from './db.js'
 import { readJsonBody, RequestError } from './listingApi.js'
 import { decodeHtmlEntities } from './htmlEntities.js'
+import { fetchEtsyApi } from './etsyApiClient.js'
 
 const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 
@@ -109,7 +110,7 @@ function checkListingBelongsToShop(env, data) {
 }
 
 async function fetchEtsyListing(env, listingId) {
-  const response = await fetch(`${ETSY_API_BASE}/listings/${listingId}?includes=Images,Videos`, {
+  const response = await fetchEtsyApi(`${ETSY_API_BASE}/listings/${listingId}?includes=Images,Videos`, {
     headers: {
       'x-api-key': `${env.ETSY_API_KEY}:${env.ETSY_SHARED_SECRET}`,
     },

@@ -45,6 +45,7 @@ import {
   createBottomPerformersHandler,
 } from './server/etsyCoach.js'
 import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
+import { createBackfillShopHistoryHandler } from './server/etsyShopStats.js'
 import { createWeeklyReportHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
@@ -141,6 +142,10 @@ function etsyTitleWriterPlugin(env) {
       )
       server.middlewares.use('/api/app-settings', createAppSettingsHandler(env, passwordsMatch))
       server.middlewares.use('/api/run-nightly-sync', createRunNightlySyncHandler(env))
+      server.middlewares.use(
+        '/api/backfill-shop-history',
+        createBackfillShopHistoryHandler(env, passwordsMatch)
+      )
       server.middlewares.use(
         '/api/nightly-sync-log',
         createNightlySyncLogHandler(env, passwordsMatch)

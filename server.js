@@ -51,6 +51,7 @@ import {
   createBottomPerformersHandler,
 } from './server/etsyCoach.js'
 import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
+import { createBackfillShopHistoryHandler } from './server/etsyShopStats.js'
 import { createWeeklyReportHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
@@ -140,6 +141,7 @@ app.use('/api/top-sellers', createTopSellersHandler(env, passwordsMatch))
 app.use('/api/bottom-performers', createBottomPerformersHandler(env, passwordsMatch))
 app.use('/api/app-settings', createAppSettingsHandler(env, passwordsMatch))
 app.use('/api/run-nightly-sync', createRunNightlySyncHandler(env))
+app.use('/api/backfill-shop-history', createBackfillShopHistoryHandler(env, passwordsMatch))
 app.use('/api/nightly-sync-log', createNightlySyncLogHandler(env, passwordsMatch))
 app.use('/api/weekly-report', createWeeklyReportHandler(env, passwordsMatch))
 app.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))

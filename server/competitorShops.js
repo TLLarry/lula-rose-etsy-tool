@@ -34,6 +34,7 @@ import { readJsonBody, RequestError } from './listingApi.js'
 import { fetchEtsyListing, isEtsyConfigured, getMissingEtsyEnvVars } from './etsyListing.js'
 import { decodeHtmlEntities } from './htmlEntities.js'
 import { getCalendarData } from './calendar.js'
+import { fetchEtsyApi, sleep } from './etsyApiClient.js'
 
 const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 const PAGE_LIMIT = 100
@@ -81,7 +82,7 @@ async function resolveCompetitorShop(env, rawUrl) {
     )
   }
 
-  const response = await fetch(`${ETSY_API_BASE}/shops?shop_name=${encodeURIComponent(shopName)}`, {
+  const response = await fetchEtsyApi(`${ETSY_API_BASE}/shops?shop_name=${encodeURIComponent(shopName)}`, {
     headers: apiKeyHeader(env),
   })
   if (!response.ok) {
@@ -103,7 +104,7 @@ async function resolveCompetitorShop(env, rawUrl) {
 }
 
 async function fetchShopCore(env, shopId) {
-  const response = await fetch(`${ETSY_API_BASE}/shops/${shopId}`, { headers: apiKeyHeader(env) })
+  const response = await fetchEtsyApi(`${ETSY_API_BASE}/shops/${shopId}`, { headers: apiKeyHeader(env) })
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
     throw new RequestError(response.status, `Failed to pull this competitor's shop data: ${detail}`)
@@ -123,8 +124,9 @@ async function fetchActiveListings(env, shopId) {
   let offset = 0
 
   while (true) {
+    if (offset > 0) await sleep(120)
     const params = new URLSearchParams({ limit: String(PAGE_LIMIT), offset: String(offset) })
-    const response = await fetch(`${ETSY_API_BASE}/shops/${shopId}/listings/active?${params}`, {
+    const response = await fetchEtsyApi(`${ETSY_API_BASE}/shops/${shopId}/listings/active?${params}`, {
       headers: apiKeyHeader(env),
     })
     if (!response.ok) {
@@ -165,8 +167,9 @@ async function fetchReviewAggregates(env, shopId) {
   let capped = false
 
   while (page < REVIEW_PAGE_CAP) {
+    if (offset > 0) await sleep(120)
     const params = new URLSearchParams({ limit: String(PAGE_LIMIT), offset: String(offset) })
-    const response = await fetch(`${ETSY_API_BASE}/shops/${shopId}/reviews?${params}`, {
+    const response = await fetchEtsyApi(`${ETSY_API_BASE}/shops/${shopId}/reviews?${params}`, {
       headers: apiKeyHeader(env),
     })
     if (!response.ok) {

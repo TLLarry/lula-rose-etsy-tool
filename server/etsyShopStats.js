@@ -27,13 +27,16 @@
 // history via fetchShopReceiptsSince's min_created param.
 import { getValidAccessToken } from './etsyOAuth.js'
 import { fetchEtsyListing } from './etsyListing.js'
+import { fetchEtsyApi, sleep } from './etsyApiClient.js'
 import {
   upsertShopListing,
   getShopListingLastKnownCounts,
   updateListingLastKnownCounts,
   upsertDailyListingStats,
   recordTodayListingStats,
+  checkAppPassword,
 } from './db.js'
+import { readJsonBody } from './listingApi.js'
 
 const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 const PAGE_LIMIT = 100
@@ -88,7 +91,7 @@ async function fetchShopListingIds(env) {
 
   while (true) {
     const params = new URLSearchParams({ state: 'active', limit: String(PAGE_LIMIT), offset: String(offset) })
-    const response = await fetch(`${ETSY_API_BASE}/shops/${env.ETSY_SHOP_ID}/listings?${params}`, {
+    const response = await fetchEtsyApi(`${ETSY_API_BASE}/shops/${env.ETSY_SHOP_ID}/listings?${params}`, {
       headers: authHeaders(env, accessToken),
     })
     if (!response.ok) {
@@ -124,7 +127,7 @@ async function fetchShopReceiptsSince(env, sinceEpochSeconds) {
       offset: String(offset),
       includes: 'Transactions',
     })
-    const response = await fetch(`${ETSY_API_BASE}/shops/${env.ETSY_SHOP_ID}/receipts?${params}`, {
+    const response = await fetchEtsyApi(`${ETSY_API_BASE}/shops/${env.ETSY_SHOP_ID}/receipts?${params}`, {
       headers: authHeaders(env, accessToken),
     })
     if (!response.ok) {
@@ -144,8 +147,14 @@ async function fetchShopReceiptsSince(env, sinceEpochSeconds) {
 // — one bucket per (listing, Phoenix calendar day the receipt was
 // CREATED), matching the Phoenix-time convention used everywhere else
 // in this app rather than the receipt's own UTC timestamp date.
+// Also returns titleByListingId, captured straight off each
+// transaction's own line-item title (Etsy retains this on the order
+// record itself) — the backfill below needs a title for every listing
+// that ever sold something this year, including ones that are no
+// longer active/public, where the live getListing lookup 404s.
 function aggregateReceiptsByListingAndDay(receipts) {
   const buckets = new Map()
+  const titleByListingId = new Map()
 
   for (const receipt of receipts) {
     const date = getPhoenixDateString(receipt.created_timestamp)
@@ -161,10 +170,14 @@ function aggregateReceiptsByListingAndDay(receipts) {
         unitsSold: existing.unitsSold + quantity,
         revenueCents: existing.revenueCents + priceCents,
       })
+
+      if (!titleByListingId.has(listingId) && typeof transaction.title === 'string' && transaction.title) {
+        titleByListingId.set(listingId, transaction.title)
+      }
     }
   }
 
-  return buckets
+  return { salesByListingAndDay: buckets, titleByListingId }
 }
 
 const RECEIPT_LOOKBACK_DAYS = 35 // a bit past 30, so the rolling-30-day window never has a gap at its edge
@@ -182,10 +195,16 @@ async function syncShopListingsAndStats(env) {
 
   const sinceEpochSeconds = Math.floor(Date.now() / 1000) - RECEIPT_LOOKBACK_DAYS * 24 * 60 * 60
   const receipts = await fetchShopReceiptsSince(env, sinceEpochSeconds)
-  const salesByListingAndDay = aggregateReceiptsByListingAndDay(receipts)
+  const { salesByListingAndDay } = aggregateReceiptsByListingAndDay(receipts)
 
   let statsRowsWritten = 0
   for (const listingId of listingIds) {
+    // A flat pace between per-listing calls (on top of fetchEtsyApi's own
+    // 429 retry) — keeps this loop comfortably under Etsy's per-second
+    // rate limit instead of bursting one request per listing back to
+    // back, which is what was causing this whole sync to fail outright
+    // on multiple recent nights (confirmed via nightly_sync_log).
+    await sleep(120)
     const listing = await fetchEtsyListing(env, listingId)
     const listingIdStr = String(listing.listingId)
     const shopListingRowId = upsertShopListing({
@@ -251,4 +270,109 @@ async function syncShopListingsAndStats(env) {
   return { listingsSynced: listingIds.length, statsRowsWritten, receiptsProcessed: receipts.length }
 }
 
-export { fetchShopListingIds, fetchShopReceiptsSince, syncShopListingsAndStats }
+// One-time historical pull — NOT part of the nightly loop. The nightly
+// sync only ever looks back RECEIPT_LOOKBACK_DAYS (35 days), by design
+// (it just needs to keep the rolling 30-day window fresh); this instead
+// walks every receipt since the start of the current calendar year so
+// quarter-over-quarter comparisons and forecasting have real history to
+// work from, not just data from whenever OAuth happened to get
+// connected. Safe to re-run — upsertDailyListingStats and
+// upsertShopListing are both idempotent on (listing, date) / listing id.
+function getStartOfCurrentYearEpochSeconds() {
+  return Math.floor(Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000)
+}
+
+async function backfillShopHistory(env, sinceEpochSeconds = getStartOfCurrentYearEpochSeconds()) {
+  const receipts = await fetchShopReceiptsSince(env, sinceEpochSeconds)
+  const { salesByListingAndDay, titleByListingId } = aggregateReceiptsByListingAndDay(receipts)
+
+  let listingsProcessed = 0
+  let daysWritten = 0
+  let listingsUnavailable = 0
+
+  for (const [listingIdStr, salesByDate] of salesByListingAndDay) {
+    await sleep(120)
+
+    let shopListingRowId
+    try {
+      const listing = await fetchEtsyListing(env, listingIdStr)
+      shopListingRowId = upsertShopListing({
+        etsyListingId: listingIdStr,
+        title: listing.title,
+        thumbnailUrl: listing.images[0]?.url || null,
+        tagsJson: JSON.stringify(listing.tags),
+        etsyCreatedAt: listing.originalCreationTimestamp
+          ? new Date(listing.originalCreationTimestamp * 1000).toISOString()
+          : null,
+      })
+    } catch {
+      // No longer publicly visible (inactive/expired/deleted) — still
+      // worth keeping its historical sales, just under whatever title
+      // the order record itself carries rather than a fresh API lookup.
+      listingsUnavailable += 1
+      shopListingRowId = upsertShopListing({
+        etsyListingId: listingIdStr,
+        title: titleByListingId.get(listingIdStr) || `Listing ${listingIdStr} (no longer available)`,
+        thumbnailUrl: null,
+        tagsJson: null,
+        etsyCreatedAt: null,
+      })
+    }
+
+    for (const [date, sales] of salesByDate) {
+      upsertDailyListingStats({
+        listingId: shopListingRowId,
+        date,
+        views: null,
+        favorites: null,
+        unitsSold: sales.unitsSold,
+        revenueCents: sales.revenueCents,
+        source: 'etsy_api_backfill',
+      })
+      daysWritten += 1
+    }
+    listingsProcessed += 1
+  }
+
+  return {
+    sinceDate: new Date(sinceEpochSeconds * 1000).toISOString().slice(0, 10),
+    receiptsProcessed: receipts.length,
+    listingsProcessed,
+    listingsUnavailable,
+    daysWritten,
+  }
+}
+
+// POST /api/backfill-shop-history — manual, one-time trigger (not on any
+// automatic schedule). Same x-app-password auth as every other endpoint.
+function createBackfillShopHistoryHandler(env, passwordsMatch) {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      const body = await readJsonBody(req).catch(() => ({}))
+      const sinceEpochSeconds = Number.isInteger(body.sinceEpochSeconds)
+        ? body.sinceEpochSeconds
+        : getStartOfCurrentYearEpochSeconds()
+      const result = await backfillShopHistory(env, sinceEpochSeconds)
+      res.end(JSON.stringify({ ok: true, ...result }))
+    } catch (err) {
+      res.statusCode = err.status || 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
+export {
+  fetchShopListingIds,
+  fetchShopReceiptsSince,
+  syncShopListingsAndStats,
+  backfillShopHistory,
+  createBackfillShopHistoryHandler,
+}
