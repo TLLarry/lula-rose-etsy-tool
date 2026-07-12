@@ -298,6 +298,10 @@
   padding-left: 18px;
 }
 
+.draft-image-errors a {
+  color: var(--text-h);
+}
+
 mark {
   background: var(--accent-bg);
   color: inherit;
