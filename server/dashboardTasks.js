@@ -135,10 +135,12 @@ function buildPriceTestTasks(recentlyActionedKeys) {
 // the same underlying signal (a keyword competitors rank for that your
 // shop-wide tags don't cover) turned into a real, instant, one-click
 // action: add a few of the missing tags directly to a specific
-// underperforming listing that has room for them. Deliberately skips
-// listings already carrying a revamp task this same build (passed in
-// via excludeListingIds) so one listing doesn't eat two task slots.
-function buildTagRefreshTasks(recentlyActionedKeys, excludeListingIds) {
+// underperforming listing that has room for them. Deliberately does NOT
+// skip listings that already have a revamp task — tag-refresh is
+// instant and doesn't touch Claude at all, while revamp does, so
+// offering both on the same listing means there's still something you
+// can act on right now even if revamp generation is unavailable.
+function buildTagRefreshTasks(recentlyActionedKeys) {
   const report = generateWeeklyReport()
   if (!report.hasData) return []
 
@@ -158,7 +160,6 @@ function buildTagRefreshTasks(recentlyActionedKeys, excludeListingIds) {
 
   const tasks = []
   for (const row of report.underperformers) {
-    if (excludeListingIds.has(row.listingId)) continue
     const taskKey = `tag-refresh-${row.listingId}`
     if (recentlyActionedKeys.has(taskKey)) continue
 
@@ -205,8 +206,7 @@ function interleave(...lists) {
 function buildDashboardTasks() {
   const recentlyActionedKeys = getRecentDashboardTaskActionKeys(daysAgoIso(TASK_MEMORY_DAYS))
   const revampTasks = buildRevampTasks(recentlyActionedKeys)
-  const excludeListingIds = new Set(revampTasks.map((task) => task.listingId))
-  const tagRefreshTasks = buildTagRefreshTasks(recentlyActionedKeys, excludeListingIds)
+  const tagRefreshTasks = buildTagRefreshTasks(recentlyActionedKeys)
   const priceTestTasks = buildPriceTestTasks(recentlyActionedKeys)
   return interleave(revampTasks, priceTestTasks, tagRefreshTasks).slice(0, MAX_TASKS)
 }
