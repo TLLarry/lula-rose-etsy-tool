@@ -790,20 +790,12 @@ mark {
   background: transparent;
 }
 
-/* Solid, unambiguous "currently pressed/active" state — the section
-   revamp Pause/Resume toggle and Stop button, once clicked. Distinct
-   from .update-listing-button's amber (that's a risk warning, this is
-   just "this is on right now") and from the plain default tan
-   .revamp-button, so there's no ambiguity about whether a click
-   registered. */
+/* Subtle "currently pressed/active" indicator — the section revamp
+   Pause/Resume toggle and Stop button, once clicked. Same background as
+   the plain default .revamp-button, just a thicker, darker border — not
+   a solid color fill. */
 .pressed-button {
-  background: #2563eb;
-  border-color: #1d4ed8;
-  color: #fff;
-}
-
-.pressed-button:disabled {
-  opacity: 0.85;
+  border: 2px solid var(--text-h);
 }
 
 .summary-cards {
