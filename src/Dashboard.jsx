@@ -45,6 +45,32 @@ function Dashboard({ password, onRevampTask }) {
   // history) without needing to track that here.
   const [dismissedIdeaIds, setDismissedIdeaIds] = useState([])
 
+  const [quarterComparison, setQuarterComparison] = useState(null)
+  const [quarterLoading, setQuarterLoading] = useState(true)
+  const [quarterError, setQuarterError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/etsy-coach/quarter-comparison', { headers: { 'x-app-password': password } })
+      .then(async (response) => {
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || 'Failed to load quarter trends.')
+        return body
+      })
+      .then((body) => {
+        if (!cancelled) setQuarterComparison(body)
+      })
+      .catch((err) => {
+        if (!cancelled) setQuarterError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setQuarterLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [password])
+
   const loadTasks = () => {
     setTasksLoading(true)
     setTasksError('')
@@ -443,11 +469,68 @@ function Dashboard({ password, onRevampTask }) {
         </div>
       </div>
 
-      <h2>Trends</h2>
-      <p className="subhead">
-        Compare two periods — the current quarter and previous quarter — to see which keywords
-        are climbing, falling, new, or dropped.
-      </p>
+      <div className="dashboard-performers-box">
+        <h2>Trends</h2>
+        {quarterError && <p className="error">{quarterError}</p>}
+        {quarterLoading && <p className="subhead">Loading…</p>}
+
+        {!quarterLoading && !quarterError && quarterComparison && (() => {
+          const rows = quarterComparison.rows || []
+          const climbing = rows.filter((row) => row.movement === 'Climbing').slice(0, 5)
+          const falling = rows.filter((row) => row.movement === 'Falling').slice(0, 5)
+          const newListings = rows.filter((row) => row.movement === 'New').slice(0, 5)
+          const dropped = rows.filter((row) => row.movement === 'Dropped').slice(0, 5)
+
+          if (rows.length === 0) {
+            return (
+              <p className="subhead">
+                Not enough sales history yet to compare {quarterComparison.previousQuarter}{' '}
+                {quarterComparison.previousYear} to {quarterComparison.currentQuarter}{' '}
+                {quarterComparison.currentYear} — check back as more of this quarter fills in.
+              </p>
+            )
+          }
+
+          const renderGroup = (title, groupRows, formatChange) =>
+            groupRows.length > 0 && (
+              <div className="competitor-gap-section" key={title}>
+                <h3>{title}</h3>
+                <ul className="competitor-gap-list">
+                  {groupRows.map((row) => (
+                    <li key={row.listingId}>
+                      {row.title} {formatChange(row)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+
+          return (
+            <>
+              <p className="subhead">
+                {quarterComparison.previousQuarter} {quarterComparison.previousYear} vs.{' '}
+                {quarterComparison.currentQuarter} {quarterComparison.currentYear}, by units sold.
+              </p>
+              {renderGroup(
+                'Climbing',
+                climbing,
+                (row) => `— ${row.previousUnits} → ${row.currentUnits} units`
+              )}
+              {renderGroup(
+                'Falling',
+                falling,
+                (row) => `— ${row.previousUnits} → ${row.currentUnits} units`
+              )}
+              {renderGroup('New this quarter', newListings, (row) => `— ${row.currentUnits} units`)}
+              {renderGroup(
+                'Dropped since last quarter',
+                dropped,
+                (row) => `— had ${row.previousUnits} units last quarter`
+              )}
+            </>
+          )
+        })()}
+      </div>
     </section>
   )
 }
