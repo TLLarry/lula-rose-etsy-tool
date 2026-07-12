@@ -51,6 +51,16 @@ function LoginScreen({ onSuccess }) {
           {loading ? 'Logging in…' : 'Log In'}
         </button>
       </form>
+
+      <footer className="login-footer">
+        <a href="/privacy" target="_blank" rel="noreferrer">
+          Privacy Policy
+        </a>
+        <span> · </span>
+        <a href="/terms" target="_blank" rel="noreferrer">
+          Terms of Service
+        </a>
+      </footer>
     </section>
   )
 }

@@ -111,6 +111,17 @@
       opacity: 0.9;
     }
   }
+
+  .login-footer {
+    margin-top: 24px;
+    font-size: 12px;
+    color: var(--text);
+
+    a {
+      color: var(--text);
+      text-decoration: underline;
+    }
+  }
 }
 
 .visually-hidden-input {
