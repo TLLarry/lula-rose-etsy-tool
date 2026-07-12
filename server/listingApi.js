@@ -442,7 +442,7 @@ You may also be given SELLER-PROVIDED FACTS — exact, seller-confirmed details 
 
 You will also produce a GEO (Generative Engine Optimization) package for this listing. AI assistants and answer engines (ChatGPT, Google AI Overviews, Perplexity, etc.) extract and cite structured, clearly-labeled content far more easily than dense prose, so the SPECS and FAQ sections below must be genuinely scannable, factual content — not marketing copy squeezed into a new shape.
 
-Return a single JSON object with exactly these fields: "tags", "header", "body", "specs", "faq", "triggerPhrases", "altText".
+Return a single JSON object with exactly these fields: "tags", "header", "body", "specs", "specLines", "faq", "triggerPhrases", "altText".
 
 TAGS (array of exactly 13 strings):
 - Provide exactly 13 tags — no more, no fewer.
@@ -471,6 +471,18 @@ SPECS (object with exactly these six string fields: whatYouGet, whoItsFor, howIt
 - sizingOrMaterials: size, dimensions, or materials — whichever is more relevant to this specific product. If the seller provided a Size/Dimensions fact and/or a Materials fact, state them here exactly (combine both if both were given) instead of describing generally.
 - turnaroundTime: a reasonable estimate of how long it takes to make and ship (e.g. "1-3 business days" or "Made to order, ships in 1 week") — never say "unknown" or leave it vague. If the seller provided a Turnaround/processing time fact, use that exact value instead of estimating.
 - howToOrder: the simple next step a buyer takes (e.g. "Add to cart and select your size at checkout"). If the seller provided a Shipping or local pickup fact, reflect it here exactly (e.g. mention that it ships, is local pickup only, or offers both, per what was given).
+
+SPEC LINES (array of short strings — a scannable dash-fact list; Listing Revamp uses this instead of SPECS above for the actual description it pushes to Etsy):
+- Every line is SHORT — a few words after any label, NEVER a full sentence. This is a fact list, not prose.
+- Each line is either "Label: value" (a short label, a colon, then a terse value) or a short standalone fact with NO label at all.
+- Include, in this order, whichever of these genuinely apply to this specific product — skip any that don't apply, never invent a value to fill a gap:
+  1. A short product-type line labeled with the actual noun for what this item is (e.g. "Balloon:", "Necklace:", "Mug:"), followed by a 2-5 word specific descriptor — e.g. "Balloon: Beer Mug Balloon".
+  2. "Size: <short value>" if a size/dimension is known. If the seller provided a Size/Dimensions fact, use it exactly.
+  3. "Material: <short value>" if the material is known. If the seller provided a Materials fact, use it exactly.
+  4. "Turnaround: <short value>" (e.g. "Ships in 1-3 business days"). If the seller provided a Turnaround/processing time fact, use that exact value instead of estimating.
+- After those labeled lines, add 1-3 short standalone usage/care/safety facts with NO label — how the item is used, worn, installed, inflated, or cleaned, or an important caution (e.g. "Inflate with air or helium", "Do not overfill or it will pop", "Hand wash only"). If the seller provided an Inflation type fact, state it in one of these lines exactly.
+- Never include ordering instructions, audience/occasion framing, or a "what you get" summary here — those are handled elsewhere, not in this list.
+- Typically 4-7 lines total; fewer is fine if the product genuinely has less to say, but never pad with filler just to hit a count.
 
 FAQ (array of exactly 5 objects, each with a "question" and an "answer" string):
 - Pick the 5 questions a real buyer would actually ask about THIS product — customization options, what's included, shipping or pickup, timing, sizing, care, etc. Choose whichever 5 are most relevant; don't force irrelevant ones.
@@ -521,6 +533,10 @@ const LISTING_EXTRAS_SCHEMA = {
       ],
       additionalProperties: false,
     },
+    specLines: {
+      type: 'array',
+      items: { type: 'string' },
+    },
     faq: {
       type: 'array',
       items: {
@@ -551,7 +567,7 @@ const LISTING_EXTRAS_SCHEMA = {
       },
     },
   },
-  required: ['tags', 'header', 'body', 'specs', 'faq', 'triggerPhrases', 'altText'],
+  required: ['tags', 'header', 'body', 'specs', 'specLines', 'faq', 'triggerPhrases', 'altText'],
   additionalProperties: false,
 }
 
@@ -806,6 +822,13 @@ async function generateListingExtras(
       parsed.specs && typeof parsed.specs === 'object'
         ? { ...EMPTY_SPECS, ...parsed.specs }
         : EMPTY_SPECS,
+    // Short dash-fact lines (e.g. "Size: Approx. 35\"") — what Listing
+    // Revamp actually assembles into the pushed description, instead of
+    // the prose-style `specs` object above (which stays for the Listing
+    // Tool's own existing Specs Block display).
+    specLines: Array.isArray(parsed.specLines)
+      ? parsed.specLines.filter((line) => typeof line === 'string' && line.trim())
+      : [],
     faq: Array.isArray(parsed.faq)
       ? parsed.faq
           .filter((item) => item && typeof item.question === 'string')

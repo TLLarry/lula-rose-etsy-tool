@@ -45,41 +45,49 @@ function statusClass(status) {
   return 'status-average'
 }
 
-// Same section labels EtsyTool.jsx's own Specs Block already uses
-// (SPECS_FIELDS there) — kept identical rather than inventing different
-// wording for the same six fields.
-const SPECS_FIELDS = [
-  ['whatYouGet', 'What You Get'],
-  ['whoItsFor', "Who It's For"],
-  ['howItWorks', 'How It Works'],
-  ['sizingOrMaterials', 'Sizing or Materials'],
-  ['turnaroundTime', 'Turnaround Time'],
-  ['howToOrder', 'How to Order'],
-]
+// Etsy descriptions are a plain string field — no HTML/markdown
+// rendering — so there's no real way to make text "bold" except by
+// using different Unicode characters that already render as bold
+// glyphs in any font. Confirmed this is a convention real sellers in
+// this shop already use (their own descriptions contain Unicode bold
+// section headers like "𝗪𝗵𝗮𝘁'𝘀 𝗜𝗻𝗰𝗹𝘂𝗱𝗲𝗱"), so this reuses an
+// established local pattern rather than inventing a new one. Only maps
+// A-Z/a-z/0-9 (Mathematical Sans-Serif Bold block); anything else
+// (spaces, punctuation) passes through unchanged.
+function toUnicodeBold(text) {
+  return text.replace(/[A-Za-z0-9]/g, (char) => {
+    const code = char.codePointAt(0)
+    if (char >= 'A' && char <= 'Z') return String.fromCodePoint(code + 0x1d5d4 - 0x41)
+    if (char >= 'a' && char <= 'z') return String.fromCodePoint(code + 0x1d5ee - 0x61)
+    return String.fromCodePoint(code + 0x1d7ec - 0x30)
+  })
+}
 
 // Assembles the actual GEO-structured description Etsy receives: the
-// generated marketing body, then the Specs Block, then the Mini-FAQ —
-// server/listingApi.js's locked GEO spec (server/listingApi.js's
-// LISTING_EXTRAS_SYSTEM_PROMPT — "AI Snippet opener" is draftHeader,
-// kept separate, unchanged), reused here exactly as designed rather
-// than generating description text a different way. Trigger phrases
-// aren't appended again as their own block — they're already woven
-// into `body` itself, same treatment as the Listing Tool's own Trigger
-// Phrases section (shown there purely for reference, not additional
-// description text — re-listing them here would just duplicate content
-// already in body).
-function formatGeoDescription(body, specs, faq) {
+// generated marketing body, then the Specs Block as short dash-prefixed
+// facts (specLines — server/listingApi.js's locked GEO spec), then a
+// short standalone "Who It's For" line, then the Mini-FAQ under a bold
+// heading. "AI Snippet opener" is draftHeader, kept separate/unchanged.
+// Trigger phrases aren't appended again as their own block — they're
+// already woven into `body` itself, same treatment as the Listing
+// Tool's own Trigger Phrases section (shown there purely for reference,
+// not additional description text).
+function formatGeoDescription(body, specs, specLines, faq) {
   const sections = [body]
 
-  if (specs) {
-    const specsBlock = SPECS_FIELDS.filter(([key]) => specs[key])
-      .map(([key, label]) => `${label}: ${specs[key]}`)
-      .join('\n')
-    if (specsBlock) sections.push(specsBlock)
+  if (Array.isArray(specLines) && specLines.length > 0) {
+    sections.push(specLines.map((line) => `- ${line}`).join('\n'))
+  }
+
+  if (specs?.whoItsFor) {
+    sections.push(`Who It's For: ${specs.whoItsFor}`)
   }
 
   if (Array.isArray(faq) && faq.length > 0) {
-    const faqBlock = ['FAQ', ...faq.map((item) => `Q: ${item.question}\nA: ${item.answer}`)].join('\n\n')
+    const faqBlock = [
+      toUnicodeBold('FAQ'),
+      ...faq.map((item) => `Q: ${item.question}\nA: ${item.answer}`),
+    ].join('\n\n')
     sections.push(faqBlock)
   }
 
@@ -368,7 +376,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       setDraftTitle(data.title)
       setDraftTags(data.tags)
       setDraftHeader(data.header)
-      setDraftBody(formatGeoDescription(data.body, data.specs, data.faq))
+      setDraftBody(formatGeoDescription(data.body, data.specs, data.specLines, data.faq))
       setDraftCreateResult(null)
       setDraftCreateError('')
       // AI-suggested alt text, present only when photos were uploaded —
@@ -429,7 +437,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       setDraftTitle(data.title)
       setDraftTags(data.tags)
       setDraftHeader(data.header)
-      setDraftBody(formatGeoDescription(data.body, data.specs, data.faq))
+      setDraftBody(formatGeoDescription(data.body, data.specs, data.specLines, data.faq))
       setDraftCreateResult(null)
       setDraftCreateError('')
       if (Array.isArray(data.altText)) {

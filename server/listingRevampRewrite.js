@@ -204,6 +204,7 @@ function createRewriteListingHandler(env, passwordsMatch) {
           // (Specs Block + Mini-FAQ) instead of pushing just the plain
           // marketing body to Etsy.
           specs: extras.specs,
+          specLines: extras.specLines,
           faq: extras.faq,
           triggerPhrases: extras.triggerPhrases,
           // Omitted entirely (not even an empty array) when no images
