@@ -111,6 +111,20 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   const [competitorError, setCompetitorError] = useState('')
   const [combiningBoth, setCombiningBoth] = useState(false)
 
+  // "Your Etsy Listing Link" also accepts a section link/name instead of
+  // a single listing — resolved server-side (server/etsySections.js)
+  // against this shop's REAL sections, never guessed client-side beyond
+  // "does this look like a listing link." sectionInfo holds the
+  // resolved section + its full listing id list + whichever of those
+  // are already done from a previous (possibly interrupted) run.
+  // sectionResults is the LIVE per-listing outcome list as the batch
+  // runs, seeded from sectionInfo.doneListingIds so already-done ones
+  // show immediately without waiting for the batch to reach them.
+  const [sectionInfo, setSectionInfo] = useState(null)
+  const [sectionResults, setSectionResults] = useState([])
+  const [processingSection, setProcessingSection] = useState(false)
+  const [sectionError, setSectionError] = useState('')
+
   const [csvFile, setCsvFile] = useState(null)
   const [parsingCsv, setParsingCsv] = useState(false)
   const [csvResult, setCsvResult] = useState(null)
@@ -243,6 +257,206 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     } finally {
       setLoading(false)
     }
+  }
+
+  // Same shape /api/load-listing itself uses to recognize a listing
+  // link (server/etsyListing.js's parseListingIdFromUrl) — kept in sync
+  // deliberately, not re-derived differently client-side.
+  const LISTING_URL_PATTERN = /etsy\.com\/(?:[a-z]{2,3}\/)?listing\/(\d+)/i
+
+  // Dispatches "Your Etsy Listing Link" to the right flow automatically
+  // — a single listing link behaves exactly as it always has
+  // (handleLoadListing, untouched); anything else (a section link, or a
+  // bare section name/title) is resolved as a SECTION instead
+  // (handleResolveSection below). The seller never has to say which one
+  // they pasted.
+  const handleLoadListingOrSection = async () => {
+    const input = listingUrl.trim()
+    if (LISTING_URL_PATTERN.test(input)) {
+      setSectionInfo(null)
+      setSectionResults([])
+      setSectionError('')
+      await handleLoadListing()
+      return
+    }
+    await handleResolveSection(input)
+  }
+
+  // Resolves a section link/name against this shop's real sections
+  // (server/etsySections.js — never guessed) and fetches its full
+  // active-listing id list, plus whichever of those already have a
+  // draft from a previous (possibly interrupted) run. Only PREVIEWS the
+  // section — actually creating drafts is a separate, explicit action
+  // (handleRevampSection), same "load/preview first, write only on a
+  // deliberate second click" shape as the single-listing flow.
+  const handleResolveSection = async (input) => {
+    setLoading(true)
+    setError('')
+    setListing(null)
+    setSectionError('')
+    setSectionInfo(null)
+    setSectionResults([])
+    try {
+      const response = await fetch('/api/resolve-section', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({ input }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || "Couldn't find that listing or section.")
+      setSectionInfo(data)
+      // Seeded from a previous run's progress so already-done listings
+      // show immediately, without waiting for the batch loop to reach
+      // them (it never will — they're skipped).
+      setSectionResults(
+        data.doneListingIds.map((id) => ({ sourceListingId: id, ok: true, alreadyDone: true }))
+      )
+    } catch (err) {
+      setSectionError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // The actual batch write action. Runs every NOT-YET-DONE listing in
+  // the section sequentially — full load → rewrite → GEO-format →
+  // create draft, exactly the single-listing pipeline below, just
+  // looped and without a per-listing review step (explicit, deliberate
+  // choice — this section-batch feature auto-creates real drafts with
+  // no pause). Progress is recorded via /api/section-revamp-progress
+  // right after EACH listing (success or failure), not deferred to the
+  // end, so an interrupted run (tab closed, crash) resumes correctly —
+  // re-resolving the same section later skips everything already
+  // 'done'. sectionResults updates after every listing too, for a truly
+  // live progress count rather than one that only moves every 10.
+  const handleRevampSection = async () => {
+    if (!sectionInfo) return
+    setProcessingSection(true)
+    setSectionError('')
+    const alreadyDone = new Set(sectionInfo.doneListingIds)
+    const remaining = sectionInfo.listingIds.filter((id) => !alreadyDone.has(id))
+    const results = sectionResults.slice()
+
+    for (const sourceListingId of remaining) {
+      let title = sourceListingId
+      try {
+        const loadResponse = await fetch('/api/load-listing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+          body: JSON.stringify({ url: `https://www.etsy.com/listing/${sourceListingId}/` }),
+        })
+        const sourceListing = await loadResponse.json()
+        if (!loadResponse.ok) throw new Error(sourceListing.error || 'Failed to load this listing.')
+        title = sourceListing.title
+
+        const rewriteResponse = await fetch('/api/rewrite-listing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+          body: JSON.stringify({
+            description: sourceListing.description,
+            // Same no-CSV fallback as Revamp My Listing — a section
+            // batch has no per-listing CSV to upload, so this is
+            // always the listing's own title/tags as keyword input.
+            keywords: [
+              { keyword: sourceListing.title },
+              ...sourceListing.tags.map((tag) => ({ keyword: tag })),
+            ],
+            taxonomyId: sourceListing.taxonomyId,
+          }),
+        })
+        const rewrite = await rewriteResponse.json()
+        if (!rewriteResponse.ok) throw new Error(rewrite.error || 'Failed to rewrite this listing.')
+
+        const description = formatGeoDescription(rewrite.body, rewrite.specs, rewrite.specLines, rewrite.faq)
+
+        // Same category-default / occasion-holiday-guess / balloon-
+        // property logic the single-listing Draft button already
+        // applies — "same rewrite rules" means these too, not just the
+        // title/tags/description generation.
+        const categoryDefaults = getCategoryDefaults(sourceListing.taxonomyId, null)
+        const whoMade = categoryDefaults?.whoMade ?? sourceListing.whoMade ?? 'i_did'
+        const isSupply = categoryDefaults?.isSupply ?? sourceListing.isSupply ?? false
+        const guesses = guessOccasionAndHoliday(sourceListing.title, sourceListing.description)
+        const material = detectBalloonMaterial({
+          materials: sourceListing.materials,
+          title: sourceListing.title,
+          description: sourceListing.description,
+        })
+        const properties = []
+        if (isKnownBalloonCategory(sourceListing.taxonomyId)) {
+          const materialProperty = material ? getMaterialProperty(sourceListing.taxonomyId, material) : null
+          if (materialProperty) properties.push(materialProperty)
+          if (guesses.occasion) {
+            properties.push({
+              propertyId: OCCASION_PROPERTY_ID,
+              valueIds: [guesses.occasion.id],
+              values: [guesses.occasion.name],
+            })
+          }
+          if (guesses.holiday) {
+            properties.push({
+              propertyId: HOLIDAY_PROPERTY_ID,
+              valueIds: [guesses.holiday.id],
+              values: [guesses.holiday.name],
+            })
+          }
+        }
+
+        const draftResponse = await fetch('/api/create-draft-listing', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+          body: JSON.stringify({
+            title: rewrite.title,
+            description,
+            tags: rewrite.tags,
+            quantity: sourceListing.quantity,
+            price: sourceListing.price,
+            whoMade,
+            whenMade: sourceListing.whenMade,
+            isSupply,
+            taxonomyId: sourceListing.taxonomyId,
+            shippingProfileId: sourceListing.shippingProfileId,
+            readinessStateId: sourceListing.readinessStateId,
+            itemWeight: sourceListing.itemWeight,
+            itemLength: sourceListing.itemLength,
+            itemWidth: sourceListing.itemWidth,
+            itemHeight: sourceListing.itemHeight,
+            itemWeightUnit: sourceListing.itemWeightUnit,
+            itemDimensionsUnit: sourceListing.itemDimensionsUnit,
+            // No images — same reasoning as the balloon multi-category
+            // duplication feature: nobody's pre-uploaded photos for an
+            // entire section's worth of drafts, so these ship image-
+            // less and the seller adds them per draft afterward.
+            images: [],
+            properties,
+          }),
+        })
+        const draft = await draftResponse.json()
+        if (!draftResponse.ok) throw new Error(draft.error || 'Failed to create this draft.')
+
+        await fetch('/api/section-revamp-progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+          body: JSON.stringify({
+            sectionId: sectionInfo.id,
+            sourceListingId,
+            draftListingId: draft.listingId,
+            status: 'done',
+          }),
+        }).catch(() => {})
+        results.push({ sourceListingId, title, ok: true, draftListingId: draft.listingId, url: draft.url })
+      } catch (err) {
+        await fetch('/api/section-revamp-progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+          body: JSON.stringify({ sectionId: sectionInfo.id, sourceListingId, status: 'failed', error: err.message }),
+        }).catch(() => {})
+        results.push({ sourceListingId, title, ok: false, error: err.message })
+      }
+      setSectionResults([...results])
+    }
+
+    setProcessingSection(false)
   }
 
   // Same pattern as handleLoadListing above, but against
@@ -683,6 +897,11 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     setCompetitorError('')
     setCombiningBoth(false)
 
+    setSectionInfo(null)
+    setSectionResults([])
+    setProcessingSection(false)
+    setSectionError('')
+
     setCsvFile(null)
     setParsingCsv(false)
     setCsvResult(null)
@@ -823,17 +1042,19 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     <section id="listing-revamp-page">
       <h1>Listing Revamp</h1>
       <p className="subhead">
-        Paste a link to one of your existing Etsy listings to pull it up and work on it here.
+        Paste a link to one of your existing Etsy listings to pull it up and work on it here — or
+        paste a link to one of your shop's SECTIONS (or just type its name) to revamp every
+        listing in it at once.
       </p>
 
       <div className="field">
-        <label htmlFor="listing-url">Your Etsy Listing Link</label>
+        <label htmlFor="listing-url">Your Etsy Listing Link (or a Section Link/Name)</label>
         <input
           id="listing-url"
           type="text"
           value={listingUrl}
           onChange={(event) => setListingUrl(event.target.value)}
-          placeholder="https://www.etsy.com/listing/1234567890/your-listing-title"
+          placeholder="A listing link, a section link (?section_id=...), or a section name"
         />
       </div>
 
@@ -851,10 +1072,10 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       <button
         type="button"
         className="revamp-button"
-        onClick={() => handleLoadListing()}
+        onClick={handleLoadListingOrSection}
         disabled={!listingUrl.trim() || loading}
       >
-        {loading ? 'Loading…' : 'Load Listing'}
+        {loading ? 'Loading…' : 'Load Listing or Section'}
       </button>
       <button
         type="button"
@@ -939,6 +1160,72 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
           </div>
         </div>
       )}
+
+      {sectionError && <p className="error">{sectionError}</p>}
+
+      {sectionInfo &&
+        (() => {
+          const doneCount = sectionResults.filter((r) => r.ok).length
+          const totalCount = sectionInfo.activeListingCount
+          const remainingCount = totalCount - doneCount
+          return (
+            <div className="result">
+              <div className="result-section">
+                <h2>Section: {sectionInfo.title}</h2>
+                <p className="subhead">
+                  {totalCount} active listing{totalCount === 1 ? '' : 's'} —{' '}
+                  {doneCount} already revamped, {remainingCount} remaining.
+                </p>
+                <button
+                  type="button"
+                  className="revamp-button"
+                  onClick={handleRevampSection}
+                  disabled={processingSection || remainingCount === 0}
+                >
+                  {processingSection
+                    ? `Revamping… (${doneCount} of ${totalCount} done)`
+                    : remainingCount === 0
+                      ? 'Entire section already revamped'
+                      : `Revamp Entire Section (${remainingCount} listing${remainingCount === 1 ? '' : 's'})`}
+                </button>
+                <p className="subhead">
+                  Creates a real DRAFT for every listing automatically — no per-listing review
+                  step. Safe to close this tab and come back later: re-loading this same section
+                  will skip anything already done and pick up where it left off.
+                </p>
+                {!processingSection && remainingCount === 0 && sectionResults.length > 0 && (
+                  <p className="draft-success">
+                    Done — all {totalCount} listings in this section now have drafts.
+                  </p>
+                )}
+                {sectionResults.length > 0 && (
+                  <ul className="draft-image-errors">
+                    {sectionResults.map((result) => (
+                      <li
+                        key={result.sourceListingId}
+                        className={result.ok ? 'draft-success' : 'error'}
+                      >
+                        {result.title || result.sourceListingId}
+                        {result.alreadyDone ? ' (already done)' : ''}:{' '}
+                        {result.ok ? (
+                          result.url ? (
+                            <a href={result.url} target="_blank" rel="noreferrer">
+                              draft created
+                            </a>
+                          ) : (
+                            'draft created previously'
+                          )
+                        ) : (
+                          result.error
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )
+        })()}
 
       {competitorError && <p className="error">{competitorError}</p>}
 

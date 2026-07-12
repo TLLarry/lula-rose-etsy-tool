@@ -87,6 +87,7 @@ const TABLE_NAMES = [
   'app_settings',
   'keyword_bank_categories',
   'keyword_bank_keywords',
+  'section_revamp_progress',
 ]
 
 // Safe to call on every boot — CREATE TABLE/INDEX IF NOT EXISTS is a no-op
@@ -369,6 +370,26 @@ function initializeSchema(realDbInstance) {
   );
 
   CREATE INDEX IF NOT EXISTS idx_keyword_bank_keywords_category ON keyword_bank_keywords(category_id);
+
+  -- Listing Revamp's "revamp an entire section" batch feature — one row
+  -- per source listing once it's been processed (successfully or not),
+  -- so re-running the same section later SKIPS anything already done
+  -- instead of starting over or creating duplicate drafts. status is
+  -- 'done' or 'failed'; a failed row can be retried (re-running the
+  -- section will attempt it again, since only 'done' rows are skipped —
+  -- see getSectionRevampDoneListingIds).
+  CREATE TABLE IF NOT EXISTS section_revamp_progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    section_id INTEGER NOT NULL,
+    source_listing_id TEXT NOT NULL,
+    draft_listing_id TEXT,
+    status TEXT NOT NULL,
+    error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(section_id, source_listing_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_section_revamp_progress_section ON section_revamp_progress(section_id);
 `)
 
   // SQLite has no `ADD COLUMN IF NOT EXISTS` — this checks PRAGMA
@@ -987,6 +1008,41 @@ function getKeywordBankForTaxonomy(taxonomyId) {
   }
 }
 
+// Only 'done' listings are treated as already handled — a 'failed' one
+// stays eligible so re-running the section retries it, rather than
+// permanently skipping a listing that never actually got a draft.
+function getSectionRevampDoneListingIds(sectionId) {
+  return db
+    .prepare(`SELECT source_listing_id FROM section_revamp_progress WHERE section_id = ? AND status = 'done'`)
+    .all(sectionId)
+    .map((row) => row.source_listing_id)
+}
+
+function getSectionRevampProgress(sectionId) {
+  return db
+    .prepare(
+      `SELECT source_listing_id, draft_listing_id, status, error, created_at
+       FROM section_revamp_progress WHERE section_id = ? ORDER BY created_at ASC`
+    )
+    .all(sectionId)
+    .map((row) => ({
+      sourceListingId: row.source_listing_id,
+      draftListingId: row.draft_listing_id,
+      status: row.status,
+      error: row.error,
+      createdAt: row.created_at,
+    }))
+}
+
+function recordSectionRevampResult({ sectionId, sourceListingId, draftListingId, status, error }) {
+  db.prepare(
+    `INSERT INTO section_revamp_progress (section_id, source_listing_id, draft_listing_id, status, error)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(section_id, source_listing_id)
+     DO UPDATE SET draft_listing_id = excluded.draft_listing_id, status = excluded.status, error = excluded.error, created_at = datetime('now')`
+  ).run(sectionId, sourceListingId, draftListingId ?? null, status, error ?? null)
+}
+
 // Manual additions (source='manual') — the "edited/added to manually
 // later" half of the feature. Silently a no-op if the keyword already
 // exists in this category (COLLATE NOCASE on the column already makes
@@ -1361,5 +1417,8 @@ export {
   getKeywordBankForTaxonomy,
   addKeywordBankKeyword,
   removeKeywordBankKeyword,
+  getSectionRevampDoneListingIds,
+  getSectionRevampProgress,
+  recordSectionRevampResult,
   DB_PATH,
 }

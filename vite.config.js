@@ -18,6 +18,10 @@ import { createSendTestEmailHandler } from './server/reminders.js'
 import { createRunReminderCheckHandler } from './server/scheduledReminders.js'
 import { createLoadListingHandler, createLoadCompetitorListingHandler } from './server/etsyListing.js'
 import { createDraftListingHandler } from './server/etsyListingDraft.js'
+import {
+  createResolveSectionHandler,
+  createRecordSectionProgressHandler,
+} from './server/etsySections.js'
 import { updateListingHandler } from './server/etsyListingUpdate.js'
 import { createEtsyTaxonomyHandler } from './server/etsyTaxonomy.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
@@ -74,6 +78,11 @@ function etsyTitleWriterPlugin(env) {
       server.middlewares.use(
         '/api/create-draft-listing',
         createDraftListingHandler(env, passwordsMatch)
+      )
+      server.middlewares.use('/api/resolve-section', createResolveSectionHandler(env, passwordsMatch))
+      server.middlewares.use(
+        '/api/section-revamp-progress',
+        createRecordSectionProgressHandler(env, passwordsMatch)
       )
       server.middlewares.use('/api/update-listing', updateListingHandler(env, passwordsMatch))
       server.middlewares.use(
