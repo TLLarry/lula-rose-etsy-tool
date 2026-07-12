@@ -33,11 +33,12 @@ import { createEtsyTaxonomyHandler } from './server/etsyTaxonomy.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
 import { createRewriteListingHandler } from './server/listingRevampRewrite.js'
 import {
-  createCompetitorsHandler,
-  createCompetitorRefreshHandler,
+  createCompetitorShopsHandler,
+  createCompetitorShopRefreshHandler,
+  createCompetitorPriceLinkHandler,
   createShopListingsPickerHandler,
-  createCompetitorLinkListingHandler,
-} from './server/competitors.js'
+  createDashboardIdeasHandler,
+} from './server/competitorShops.js'
 import {
   createEtsyOAuthStartHandler,
   createEtsyOAuthCallbackHandler,
@@ -121,17 +122,15 @@ app.use('/api/update-listing', updateListingHandler(env, passwordsMatch))
 app.use('/api/etsy-taxonomy', createEtsyTaxonomyHandler(env, passwordsMatch))
 app.use('/api/parse-listing-csv', createParseListingCsvHandler(env, passwordsMatch))
 app.use('/api/rewrite-listing', createRewriteListingHandler(env, passwordsMatch))
-// Must be registered before '/api/competitors' — app.use matches by path
-// prefix, so the more specific route needs to come first or every
-// /api/competitors/refresh request would get swallowed by the broader
-// handler instead.
-app.use('/api/competitors/refresh', createCompetitorRefreshHandler(env, passwordsMatch))
-app.use(
-  '/api/competitors/link-listing',
-  createCompetitorLinkListingHandler(env, passwordsMatch)
-)
-app.use('/api/competitors', createCompetitorsHandler(env, passwordsMatch))
+// Must be registered before '/api/competitor-shops' — app.use matches by
+// path prefix, so the more specific routes need to come first or every
+// /api/competitor-shops/refresh request would get swallowed by the
+// broader handler instead.
+app.use('/api/competitor-shops/refresh', createCompetitorShopRefreshHandler(env, passwordsMatch))
+app.use('/api/competitor-shops/price-link', createCompetitorPriceLinkHandler(env, passwordsMatch))
+app.use('/api/competitor-shops', createCompetitorShopsHandler(env, passwordsMatch))
 app.use('/api/shop-listings', createShopListingsPickerHandler(env, passwordsMatch))
+app.use('/api/dashboard-ideas', createDashboardIdeasHandler(env, passwordsMatch))
 app.use('/api/etsy-oauth/start', createEtsyOAuthStartHandler(env, passwordsMatch))
 app.use('/api/etsy-oauth/callback', createEtsyOAuthCallbackHandler(env))
 app.use('/api/etsy-oauth/status', createEtsyOAuthStatusHandler(env, passwordsMatch))

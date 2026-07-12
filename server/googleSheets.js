@@ -84,18 +84,19 @@ function buildSheetRows(reviewDate, flags, competitorSnapshots) {
     flag.message,
   ])
   const competitorRows = competitorSnapshots
-    .filter((competitor) => competitor.title) // only ones that have actually been refreshed
+    .filter((competitor) => competitor.hasData) // only shops that have actually been pulled
     .map((competitor) => [
       reviewDate,
       'competitor_snapshot',
-      competitor.title,
-      `Tags: ${competitor.tags_json || 'n/a'}`,
+      competitor.shopName,
+      `New sales: ${competitor.newSalesSinceLastCheck ?? 'n/a'}, new reviews: ${competitor.newReviewsSinceLastCheck ?? 'n/a'}, new listings: ${competitor.newListings.length}`,
     ])
   return [...flagRows, ...competitorRows]
 }
 
 // Called by the nightly sync orchestrator with the same night's flags
-// (from etsy_coach_flags) and competitor snapshots (from competitors).
+// (from etsy_coach_flags) and competitor shop views (from
+// server/competitorShops.js's buildCompetitorShopView).
 // Writes nothing and returns rowsWritten: 0 if there's simply nothing
 // new to report that night — not an error.
 async function writeWeeklySummary(env, { reviewDate, flags, competitors }) {

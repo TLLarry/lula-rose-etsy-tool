@@ -1,12 +1,7 @@
 import { useEffect, useState } from 'react'
 
-// Same check the backend uses to decide whether a tracked link can be
-// pulled at all — shop links aren't resolvable to a single listing yet
-// (see server/competitors.js), so the button is hidden rather than left
-// clickable only to fail every time.
-function isListingTypeUrl(url) {
-  return /etsy\.com\/(?:[a-z]{2,3}\/)?listing\//i.test(url)
-}
+const MAX_SLOTS = 3
+const NOTABLE_PRICE_DIFF_FRACTION = 0.15
 
 // last_synced_at is a bare SQLite `datetime('now')` string (UTC, no
 // timezone marker) — appending Z before parsing is what makes
@@ -19,72 +14,65 @@ function formatSyncedAt(rawDatetime) {
   return parsed.toLocaleString()
 }
 
-// Case/whitespace-insensitive tag comparison — Etsy sellers are
-// inconsistent about capitalization ("Party Decorations" vs "party
-// decorations" are the same real tag), so matching is done on a
-// normalized key while every group still displays the tag in whichever
-// side's original casing it belongs to.
-function compareTags(myTags, theirTags) {
-  const myByKey = new Map(myTags.map((tag) => [tag.trim().toLowerCase(), tag]))
-  const theirByKey = new Map(theirTags.map((tag) => [tag.trim().toLowerCase(), tag]))
+function formatMoney(cents) {
+  if (typeof cents !== 'number') return '—'
+  return `$${(cents / 100).toFixed(2)}`
+}
 
-  const gap = []
-  const overlap = []
-  for (const [key, theirTag] of theirByKey) {
-    if (myByKey.has(key)) {
-      overlap.push(myByKey.get(key))
-    } else {
-      gap.push(theirTag)
-    }
+function formatDiff(count) {
+  if (count === null || count === undefined) return 'Not enough history yet — check back after the next weekly pull.'
+  if (count === 0) return 'No change since last check.'
+  return count > 0 ? `+${count} since last check` : `${count} since last check`
+}
+
+function priceComparisonLabel(competitorPriceCents, myPriceCents) {
+  if (typeof competitorPriceCents !== 'number' || typeof myPriceCents !== 'number' || myPriceCents === 0) {
+    return null
   }
-  const edge = [...myByKey].filter(([key]) => !theirByKey.has(key)).map(([, tag]) => tag)
-
-  return { gap, edge, overlap }
+  const diffPct = (competitorPriceCents - myPriceCents) / myPriceCents
+  if (diffPct >= NOTABLE_PRICE_DIFF_FRACTION) return 'Priced notably higher than your listing.'
+  if (diffPct <= -NOTABLE_PRICE_DIFF_FRACTION) return 'Priced notably lower than your listing.'
+  return 'Priced about the same as your listing.'
 }
 
 function CompetitorBenchmarking({ password }) {
-  const [competitors, setCompetitors] = useState([])
+  const [shops, setShops] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
-  const [newUrl, setNewUrl] = useState('')
-  const [adding, setAdding] = useState(false)
-  const [actionError, setActionError] = useState('')
-  const [removingId, setRemovingId] = useState(null)
+  const [myListings, setMyListings] = useState([])
 
+  const [addUrlBySlot, setAddUrlBySlot] = useState({})
+  const [addingSlot, setAddingSlot] = useState(null)
+  const [addErrorBySlot, setAddErrorBySlot] = useState({})
+
+  const [removingId, setRemovingId] = useState(null)
   const [refreshingId, setRefreshingId] = useState(null)
   const [refreshErrors, setRefreshErrors] = useState({})
 
-  const [shopListings, setShopListings] = useState([])
-  // Which competitor currently has the "pick one of your listings" picker
-  // open — always open for a never-linked competitor (set once its data
-  // loads), and toggled on by "Change" for an already-linked one.
-  const [openPickerId, setOpenPickerId] = useState(null)
-  const [selectedListingByCompetitor, setSelectedListingByCompetitor] = useState({})
-  const [linkingId, setLinkingId] = useState(null)
-  const [linkErrors, setLinkErrors] = useState({})
+  const [priceLinkSelection, setPriceLinkSelection] = useState({})
+  const [addingPriceLinkShopId, setAddingPriceLinkShopId] = useState(null)
+  const [priceLinkErrors, setPriceLinkErrors] = useState({})
+  const [removingPriceLinkId, setRemovingPriceLinkId] = useState(null)
 
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/competitors', { headers: { 'x-app-password': password } })
+  const loadShops = () => {
+    setLoading(true)
+    setLoadError('')
+    return fetch('/api/competitor-shops', { headers: { 'x-app-password': password } })
       .then(async (response) => {
         const body = await response.json()
-        if (!response.ok) throw new Error(body.error || 'Failed to load competitors.')
+        if (!response.ok) throw new Error(body.error || 'Failed to load tracked competitor shops.')
         return body
       })
-      .then((body) => {
-        if (!cancelled) setCompetitors(body.competitors)
-      })
-      .catch((err) => {
-        if (!cancelled) setLoadError(err.message)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [password])
+      .then((body) => setShops(body.shops))
+      .catch((err) => setLoadError(err.message))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadShops()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -95,51 +83,58 @@ function CompetitorBenchmarking({ password }) {
         return body
       })
       .then((body) => {
-        if (!cancelled) setShopListings(body.listings)
+        if (!cancelled) setMyListings(body.listings)
       })
       .catch(() => {
-        // Non-fatal — the tag-gap comparison just stays unavailable
-        // (each card still shows its pulled title/tags fine without it).
+        // Non-fatal — the price-comparison picker just stays empty.
       })
     return () => {
       cancelled = true
     }
   }, [password])
 
-  const handleAddCompetitor = async () => {
-    if (!newUrl.trim()) return
-    setAdding(true)
-    setActionError('')
+  const handleAddCompetitor = async (slotIndex) => {
+    const url = (addUrlBySlot[slotIndex] || '').trim()
+    if (!url) return
+    setAddingSlot(slotIndex)
+    setAddErrorBySlot((prev) => ({ ...prev, [slotIndex]: '' }))
     try {
-      const response = await fetch('/api/competitors', {
+      const response = await fetch('/api/competitor-shops', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-        body: JSON.stringify({ url: newUrl }),
+        body: JSON.stringify({ url }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Failed to add that competitor.')
-      setCompetitors(data.competitors)
-      setNewUrl('')
+      if (!response.ok) throw new Error(data.error || 'Failed to add that competitor shop.')
+      setShops(data.shops)
+      setAddUrlBySlot((prev) => ({ ...prev, [slotIndex]: '' }))
+      // The newly added shop lands at the position the slot list had
+      // before this add — surfaced on ITS card (via refreshErrors, the
+      // same "couldn't pull data" message a failed Refresh Now shows),
+      // not on the add-form, since that slot no longer renders one.
+      if (data.warning) {
+        const newShop = data.shops[shops.length]
+        if (newShop) setRefreshErrors((prev) => ({ ...prev, [newShop.id]: data.warning }))
+      }
     } catch (err) {
-      setActionError(err.message)
+      setAddErrorBySlot((prev) => ({ ...prev, [slotIndex]: err.message }))
     } finally {
-      setAdding(false)
+      setAddingSlot(null)
     }
   }
 
   const handleRemoveCompetitor = async (id) => {
     setRemovingId(id)
-    setActionError('')
     try {
-      const response = await fetch(`/api/competitors?id=${id}`, {
+      const response = await fetch(`/api/competitor-shops?id=${id}`, {
         method: 'DELETE',
         headers: { 'x-app-password': password },
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Failed to remove that competitor.')
-      setCompetitors(data.competitors)
+      if (!response.ok) throw new Error(data.error || 'Failed to remove that competitor shop.')
+      setShops(data.shops)
     } catch (err) {
-      setActionError(err.message)
+      setLoadError(err.message)
     } finally {
       setRemovingId(null)
     }
@@ -149,14 +144,14 @@ function CompetitorBenchmarking({ password }) {
     setRefreshingId(id)
     setRefreshErrors((prev) => ({ ...prev, [id]: '' }))
     try {
-      const response = await fetch('/api/competitors/refresh', {
+      const response = await fetch('/api/competitor-shops/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-app-password': password },
         body: JSON.stringify({ id }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || "Failed to pull this competitor's data.")
-      setCompetitors(data.competitors)
+      setShops(data.shops)
     } catch (err) {
       setRefreshErrors((prev) => ({ ...prev, [id]: err.message }))
     } finally {
@@ -164,287 +159,383 @@ function CompetitorBenchmarking({ password }) {
     }
   }
 
-  const handleLinkListing = async (competitorId) => {
-    const listingId = Number(selectedListingByCompetitor[competitorId])
-    if (!listingId) return
-    setLinkingId(competitorId)
-    setLinkErrors((prev) => ({ ...prev, [competitorId]: '' }))
+  const handleAddPriceLink = async (shop) => {
+    const selection = priceLinkSelection[shop.id] || {}
+    if (!selection.competitorListingId || !selection.myListingId) return
+    setAddingPriceLinkShopId(shop.id)
+    setPriceLinkErrors((prev) => ({ ...prev, [shop.id]: '' }))
     try {
-      const response = await fetch('/api/competitors/link-listing', {
+      const competitorListing = shop.activeListingsForPicker.find(
+        (l) => l.listingId === selection.competitorListingId
+      )
+      const response = await fetch('/api/competitor-shops/price-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-        body: JSON.stringify({ competitorId, listingId }),
+        body: JSON.stringify({
+          competitorShopId: shop.id,
+          competitorListingId: selection.competitorListingId,
+          competitorListingTitle: competitorListing?.title,
+          competitorListingUrl: `https://www.etsy.com/listing/${selection.competitorListingId}`,
+          myListingId: Number(selection.myListingId),
+        }),
       })
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Failed to link that listing.')
-      setCompetitors(data.competitors)
-      setOpenPickerId(null)
+      if (!response.ok) throw new Error(data.error || 'Failed to add that price comparison.')
+      setShops(data.shops)
+      setPriceLinkSelection((prev) => ({ ...prev, [shop.id]: {} }))
     } catch (err) {
-      setLinkErrors((prev) => ({ ...prev, [competitorId]: err.message }))
+      setPriceLinkErrors((prev) => ({ ...prev, [shop.id]: err.message }))
     } finally {
-      setLinkingId(null)
+      setAddingPriceLinkShopId(null)
     }
   }
+
+  const handleRemovePriceLink = async (id) => {
+    setRemovingPriceLinkId(id)
+    try {
+      const response = await fetch(`/api/competitor-shops/price-link?id=${id}`, {
+        method: 'DELETE',
+        headers: { 'x-app-password': password },
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to remove that price comparison.')
+      setShops(data.shops)
+    } finally {
+      setRemovingPriceLinkId(null)
+    }
+  }
+
+  const slots = Array.from({ length: MAX_SLOTS }, (_, i) => shops[i] || null)
 
   return (
     <section id="competitor-benchmarking-page">
       <h1>Competitor Benchmarking</h1>
       <p className="subhead">
-        Track competitors by shop or listing link, pull their title and tags straight from Etsy,
-        then compare against one of your own listings to see exactly where you're ahead and
-        where you're missing keywords.
+        Track up to three competitor shops. Each one is pulled fresh once a week, so you can see
+        what's changed since the last check — new sales, new reviews, new listings, and price
+        moves — without digging through their shop page yourself.
       </p>
 
-      <div className="field">
-        <label htmlFor="competitor-url">Competitor shop or listing link</label>
-        <input
-          id="competitor-url"
-          type="text"
-          value={newUrl}
-          onChange={(event) => setNewUrl(event.target.value)}
-          placeholder="https://www.etsy.com/shop/CompetitorShopName"
-        />
-      </div>
-
-      <button type="button" onClick={handleAddCompetitor} disabled={!newUrl.trim() || adding}>
-        {adding ? 'Adding…' : 'Add Competitor'}
-      </button>
-
-      {actionError && <p className="error">{actionError}</p>}
       {loadError && <p className="error">{loadError}</p>}
       {loading && <p className="subhead">Loading…</p>}
 
       {!loading && (
-        <div className="competitor-section">
-          <h2>Tracked Competitors ({competitors.length})</h2>
-          {competitors.length === 0 ? (
-            <p className="subhead">No competitors tracked yet — add one above.</p>
-          ) : (
-            <div className="competitor-card-list">
-              {competitors.map((competitor) => {
-                const tags = competitor.tags_json ? JSON.parse(competitor.tags_json) : []
-                const syncedAt = formatSyncedAt(competitor.last_synced_at)
-                const canPull = isListingTypeUrl(competitor.url)
-                const isRefreshing = refreshingId === competitor.id
-                const isLinking = linkingId === competitor.id
-                const showPicker =
-                  tags.length > 0 && (!competitor.linked_listing_id || openPickerId === competitor.id)
-                const myTags = competitor.linked_listing_tags_json
-                  ? JSON.parse(competitor.linked_listing_tags_json)
-                  : []
-                const comparison =
-                  competitor.linked_listing_id && myTags.length > 0
-                    ? compareTags(myTags, tags)
-                    : null
-
-                return (
-                  <div className="competitor-card" key={competitor.id}>
-                    <div className="competitor-card-header">
-                      <a
-                        href={competitor.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="competitor-url"
-                      >
-                        {competitor.url}
-                      </a>
-                      <button
-                        type="button"
-                        className="upload-button"
-                        onClick={() => handleRemoveCompetitor(competitor.id)}
-                        disabled={removingId === competitor.id}
-                      >
-                        {removingId === competitor.id ? 'Removing…' : 'Remove'}
-                      </button>
-                    </div>
-
-                    <div className="competitor-card-body">
-                      {competitor.thumbnail_url && (
-                        <img
-                          className="competitor-thumb"
-                          src={competitor.thumbnail_url}
-                          alt={competitor.title || 'Competitor listing'}
-                        />
-                      )}
-                      <div className="competitor-card-details">
-                        {competitor.title ? (
-                          <p className="competitor-title">{competitor.title}</p>
-                        ) : (
-                          <p className="subhead">
-                            {canPull
-                              ? 'Not pulled yet — click Pull Data to fetch this listing\'s title and tags.'
-                              : "Shop links can't be pulled automatically yet — track a specific listing link instead."}
-                          </p>
-                        )}
-
-                        {tags.length > 0 && (
-                          <div className="competitor-tag-row">
-                            {tags.map((tag) => (
-                              <span className="competitor-tag-pill" key={tag}>
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-
-                        {syncedAt && <p className="competitor-synced-at">Last pulled: {syncedAt}</p>}
-
-                        {refreshErrors[competitor.id] && (
-                          <p className="error">{refreshErrors[competitor.id]}</p>
-                        )}
-                      </div>
-                    </div>
-
-                    {canPull && (
-                      <button
-                        type="button"
-                        className="revamp-button"
-                        onClick={() => handleRefreshCompetitor(competitor.id)}
-                        disabled={isRefreshing}
-                      >
-                        {isRefreshing ? 'Pulling…' : competitor.title ? 'Refresh' : 'Pull Data'}
-                      </button>
-                    )}
-
-                    {tags.length > 0 && !showPicker && (
-                      <div className="competitor-gap-section">
-                        <p className="competitor-comparing-against">
-                          Comparing against: <strong>{competitor.linked_listing_title}</strong>{' '}
-                          <button
-                            type="button"
-                            className="competitor-change-link"
-                            onClick={() => setOpenPickerId(competitor.id)}
-                          >
-                            Change
-                          </button>
-                        </p>
-                        {!comparison ? (
-                          <p className="subhead">
-                            Your linked listing doesn't have any tags synced yet — nothing to
-                            compare.
-                          </p>
-                        ) : (
-                          <>
-                            <div className="competitor-gap-group">
-                              <h3>The gap — tags they use that you don't</h3>
-                              {comparison.gap.length === 0 ? (
-                                <p className="subhead">
-                                  You already have every tag they're using — no gap here.
-                                </p>
-                              ) : (
-                                <ul className="competitor-gap-list">
-                                  {comparison.gap.map((tag) => (
-                                    <li key={tag}>
-                                      They rank for <strong>"{tag}"</strong> — you don't have
-                                      this tag yet.
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </div>
-
-                            <div className="competitor-gap-group">
-                              <h3>Your edge — tags you use that they don't</h3>
-                              {comparison.edge.length === 0 ? (
-                                <p className="subhead">
-                                  Every tag on your listing is also on theirs — no unique edge
-                                  right now.
-                                </p>
-                              ) : (
-                                <ul className="competitor-gap-list">
-                                  {comparison.edge.map((tag) => (
-                                    <li key={tag}>
-                                      You use <strong>"{tag}"</strong> — they don't have this
-                                      tag.
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </div>
-
-                            <div className="competitor-gap-group">
-                              <h3>Overlap — tags you both use</h3>
-                              {comparison.overlap.length === 0 ? (
-                                <p className="subhead">
-                                  No shared tags between the two listings.
-                                </p>
-                              ) : (
-                                <div className="competitor-tag-row">
-                                  {comparison.overlap.map((tag) => (
-                                    <span className="competitor-tag-pill" key={tag}>
-                                      {tag}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-
-                    {showPicker && (
-                      <div className="competitor-gap-section">
-                        <p className="subhead">
-                          {competitor.linked_listing_id
-                            ? 'Pick a different listing of yours to compare against:'
-                            : "Pick one of your listings to compare this competitor's tags against:"}
-                        </p>
-                        {shopListings.length === 0 ? (
-                          <p className="subhead">
-                            No listings of yours are synced yet — connect your Etsy account so
-                            your listings show up here.
-                          </p>
-                        ) : (
-                          <div className="competitor-link-row">
-                            <select
-                              value={selectedListingByCompetitor[competitor.id] || ''}
-                              onChange={(event) =>
-                                setSelectedListingByCompetitor((prev) => ({
-                                  ...prev,
-                                  [competitor.id]: event.target.value,
-                                }))
-                              }
-                            >
-                              <option value="">Select a listing…</option>
-                              {shopListings.map((listing) => (
-                                <option key={listing.id} value={listing.id}>
-                                  {listing.title}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              type="button"
-                              className="revamp-button"
-                              onClick={() => handleLinkListing(competitor.id)}
-                              disabled={!selectedListingByCompetitor[competitor.id] || isLinking}
-                            >
-                              {isLinking ? 'Linking…' : 'Compare'}
-                            </button>
-                            {competitor.linked_listing_id && (
-                              <button
-                                type="button"
-                                className="competitor-change-link"
-                                onClick={() => setOpenPickerId(null)}
-                              >
-                                Cancel
-                              </button>
-                            )}
-                          </div>
-                        )}
-                        {linkErrors[competitor.id] && (
-                          <p className="error">{linkErrors[competitor.id]}</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+        <div className="competitor-shop-grid">
+          {slots.map((shop, slotIndex) =>
+            shop ? (
+              <CompetitorShopCard
+                key={shop.id}
+                shop={shop}
+                myListings={myListings}
+                removingId={removingId}
+                refreshingId={refreshingId}
+                refreshErrors={refreshErrors}
+                onRemove={handleRemoveCompetitor}
+                onRefresh={handleRefreshCompetitor}
+                priceLinkSelection={priceLinkSelection[shop.id] || {}}
+                onPriceLinkSelectionChange={(next) =>
+                  setPriceLinkSelection((prev) => ({ ...prev, [shop.id]: next }))
+                }
+                onAddPriceLink={() => handleAddPriceLink(shop)}
+                addingPriceLink={addingPriceLinkShopId === shop.id}
+                priceLinkError={priceLinkErrors[shop.id]}
+                onRemovePriceLink={handleRemovePriceLink}
+                removingPriceLinkId={removingPriceLinkId}
+              />
+            ) : (
+              <div className="competitor-card" key={`empty-${slotIndex}`}>
+                <p className="subhead">Slot {slotIndex + 1} — empty</p>
+                <div className="field">
+                  <label htmlFor={`competitor-url-${slotIndex}`}>Competitor shop link</label>
+                  <input
+                    id={`competitor-url-${slotIndex}`}
+                    type="text"
+                    value={addUrlBySlot[slotIndex] || ''}
+                    onChange={(event) =>
+                      setAddUrlBySlot((prev) => ({ ...prev, [slotIndex]: event.target.value }))
+                    }
+                    placeholder="https://www.etsy.com/shop/CompetitorShopName"
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="revamp-button"
+                  onClick={() => handleAddCompetitor(slotIndex)}
+                  disabled={!(addUrlBySlot[slotIndex] || '').trim() || addingSlot === slotIndex}
+                >
+                  {addingSlot === slotIndex ? 'Adding…' : 'Add Competitor'}
+                </button>
+                {addErrorBySlot[slotIndex] && <p className="error">{addErrorBySlot[slotIndex]}</p>}
+              </div>
+            )
           )}
         </div>
       )}
     </section>
+  )
+}
+
+function CompetitorShopCard({
+  shop,
+  myListings,
+  removingId,
+  refreshingId,
+  refreshErrors,
+  onRemove,
+  onRefresh,
+  priceLinkSelection,
+  onPriceLinkSelectionChange,
+  onAddPriceLink,
+  addingPriceLink,
+  priceLinkError,
+  onRemovePriceLink,
+  removingPriceLinkId,
+}) {
+  const syncedAt = formatSyncedAt(shop.lastSyncedAt)
+  const isRefreshing = refreshingId === shop.id
+
+  return (
+    <div className="competitor-card">
+      <div className="competitor-card-header">
+        {shop.iconUrl ? (
+          <a href={shop.url} target="_blank" rel="noreferrer">
+            <img className="competitor-thumb" src={shop.iconUrl} alt={shop.shopName} />
+          </a>
+        ) : (
+          <a href={shop.url} target="_blank" rel="noreferrer" className="competitor-url">
+            {shop.shopName}
+          </a>
+        )}
+        <button
+          type="button"
+          className="upload-button"
+          onClick={() => onRemove(shop.id)}
+          disabled={removingId === shop.id}
+        >
+          {removingId === shop.id ? 'Removing…' : 'Remove'}
+        </button>
+      </div>
+
+      {shop.iconUrl && <p className="competitor-title">{shop.shopName}</p>}
+      {syncedAt && <p className="competitor-synced-at">Last pulled: {syncedAt}</p>}
+      {refreshErrors[shop.id] && <p className="error">{refreshErrors[shop.id]}</p>}
+
+      <button type="button" className="revamp-button" onClick={() => onRefresh(shop.id)} disabled={isRefreshing}>
+        {isRefreshing ? 'Pulling…' : 'Refresh Now'}
+      </button>
+
+      {!shop.hasData && <p className="subhead">Not pulled yet — click Refresh Now to fetch this shop's data.</p>}
+
+      {shop.hasData && (
+        <>
+          <div className="summary-cards competitor-shop-stats">
+            <div className="summary-card">
+              <p className="summary-card-label">Reviews</p>
+              <p className="summary-card-value">{shop.reviewCount ?? '—'}</p>
+              <p className="summary-card-note">
+                {formatDiff(shop.newReviewsSinceLastCheck)}
+                {typeof shop.reviewAverage === 'number' ? ` · ${shop.reviewAverage.toFixed(2)}★ avg` : ''}
+              </p>
+            </div>
+            <div className="summary-card">
+              <p className="summary-card-label">Sales (approximate)</p>
+              <p className="summary-card-value">—</p>
+              <p className="summary-card-note">{formatDiff(shop.newSalesSinceLastCheck)}</p>
+            </div>
+            <div className="summary-card">
+              <p className="summary-card-label">Active Listings</p>
+              <p className="summary-card-value">{shop.listingActiveCount ?? '—'}</p>
+            </div>
+          </div>
+
+          <div className="competitor-gap-section">
+            <h3>Best sellers (approximate — ranked by review count, not confirmed sales)</h3>
+            {shop.bestSellers.length === 0 ? (
+              <p className="subhead">No reviewed listings found yet.</p>
+            ) : (
+              <ul className="competitor-gap-list">
+                {shop.bestSellers.map((item) => (
+                  <li key={item.listingId}>
+                    <a href={item.url} target="_blank" rel="noreferrer">
+                      {item.title}
+                    </a>{' '}
+                    — {item.reviewCount} review{item.reviewCount === 1 ? '' : 's'}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="competitor-gap-section">
+            <h3>Reviews in the last 30 days</h3>
+            {shop.reviewsLast30d.length === 0 ? (
+              <p className="subhead">No reviews in the last 30 days.</p>
+            ) : (
+              <ul className="competitor-gap-list">
+                {shop.reviewsLast30d.map((item) => (
+                  <li key={item.listingId}>
+                    <a href={item.url} target="_blank" rel="noreferrer">
+                      {item.title}
+                    </a>{' '}
+                    — {item.count} review{item.count === 1 ? '' : 's'} in 30 days
+                    {item.hot && ' — worth adding a similar item to your shop.'}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="competitor-gap-section">
+            <h3>New listings since last check</h3>
+            {shop.newListings.length === 0 ? (
+              <p className="subhead">No new listings since the last check.</p>
+            ) : (
+              <ul className="competitor-gap-list">
+                {shop.newListings.map((item) => (
+                  <li key={item.listingId}>
+                    <a href={item.url} target="_blank" rel="noreferrer">
+                      {item.title}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="competitor-gap-section">
+            <h3>Price comparison</h3>
+            {shop.priceLinks.length === 0 && <p className="subhead">No listings linked for price comparison yet.</p>}
+            {shop.priceLinks.length > 0 && (
+              <ul className="competitor-gap-list">
+                {shop.priceLinks.map((link) => {
+                  const label = priceComparisonLabel(link.competitorPriceCents, link.myPriceCents)
+                  return (
+                    <li key={link.id}>
+                      <a href={link.competitorListingUrl} target="_blank" rel="noreferrer">
+                        {link.competitorListingTitle}
+                      </a>{' '}
+                      ({formatMoney(link.competitorPriceCents)}) vs. your{' '}
+                      <strong>{link.myListingTitle || 'linked listing'}</strong> (
+                      {formatMoney(link.myPriceCents)}){label ? ` — ${label}` : ''}
+                      {link.priceDropped && ' Price dropped sharply since the last check.'}{' '}
+                      <button
+                        type="button"
+                        className="competitor-change-link"
+                        onClick={() => onRemovePriceLink(link.id)}
+                        disabled={removingPriceLinkId === link.id}
+                      >
+                        {removingPriceLinkId === link.id ? 'Removing…' : 'Remove'}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+
+            <div className="competitor-link-row">
+              <select
+                value={priceLinkSelection.competitorListingId || ''}
+                onChange={(event) =>
+                  onPriceLinkSelectionChange({ ...priceLinkSelection, competitorListingId: event.target.value })
+                }
+              >
+                <option value="">Their listing…</option>
+                {shop.activeListingsForPicker.map((listing) => (
+                  <option key={listing.listingId} value={listing.listingId}>
+                    {listing.title}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={priceLinkSelection.myListingId || ''}
+                onChange={(event) =>
+                  onPriceLinkSelectionChange({ ...priceLinkSelection, myListingId: event.target.value })
+                }
+              >
+                <option value="">Your listing…</option>
+                {myListings.map((listing) => (
+                  <option key={listing.id} value={listing.id}>
+                    {listing.title}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="revamp-button"
+                onClick={onAddPriceLink}
+                disabled={!priceLinkSelection.competitorListingId || !priceLinkSelection.myListingId || addingPriceLink}
+              >
+                {addingPriceLink ? 'Adding…' : 'Compare'}
+              </button>
+            </div>
+            {priceLinkError && <p className="error">{priceLinkError}</p>}
+          </div>
+
+          <div className="competitor-gap-section">
+            <h3>The gap — tags they use that you don't</h3>
+            {shop.tagGap.gap.length === 0 ? (
+              <p className="subhead">You already have every tag they're using — no gap here.</p>
+            ) : (
+              <>
+                <ul className="competitor-gap-list">
+                  {shop.tagGap.gap.map((tag) => (
+                    <li key={tag}>
+                      They rank for <strong>"{tag}"</strong> — you don't have this tag yet.
+                    </li>
+                  ))}
+                </ul>
+                {shop.tagGap.gapTotal > shop.tagGap.gap.length && (
+                  <p className="competitor-synced-at">
+                    Showing their top {shop.tagGap.gap.length} most-used tags you're missing, out of{' '}
+                    {shop.tagGap.gapTotal} total.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="competitor-gap-section">
+            <h3>Your edge — tags you use that they don't</h3>
+            {shop.tagGap.edge.length === 0 ? (
+              <p className="subhead">Every tag you use is also on their shop — no unique edge right now.</p>
+            ) : (
+              <>
+                <ul className="competitor-gap-list">
+                  {shop.tagGap.edge.map((tag) => (
+                    <li key={tag}>
+                      You use <strong>"{tag}"</strong> — they don't have this tag.
+                    </li>
+                  ))}
+                </ul>
+                {shop.tagGap.edgeTotal > shop.tagGap.edge.length && (
+                  <p className="competitor-synced-at">
+                    Showing {shop.tagGap.edge.length} of {shop.tagGap.edgeTotal} tags unique to you.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          {shop.tagGap.overlap.length > 0 && (
+            <div className="competitor-gap-section">
+              <h3>Overlap — tags you both use</h3>
+              <div className="competitor-tag-row">
+                {shop.tagGap.overlap.map((tag) => (
+                  <span className="competitor-tag-pill" key={tag}>
+                    {tag}
+                  </span>
+                ))}
+              </div>
+              {shop.tagGap.overlapTotal > shop.tagGap.overlap.length && (
+                <p className="competitor-synced-at">
+                  Showing your {shop.tagGap.overlap.length} most-shared tags, out of {shop.tagGap.overlapTotal} total.
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 

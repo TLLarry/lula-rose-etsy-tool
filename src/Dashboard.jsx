@@ -20,6 +20,17 @@ function Dashboard({ password }) {
   const [bottomError, setBottomError] = useState('')
   const [expandedBottomId, setExpandedBottomId] = useState(null)
 
+  const [ideas, setIdeas] = useState([])
+  const [ideasLoading, setIdeasLoading] = useState(true)
+  const [ideasError, setIdeasError] = useState('')
+  // Session-only — dismissing an idea just hides it from THIS view of
+  // the list, it doesn't delete or persist anything server-side. Ideas
+  // are recomputed fresh from current competitor data on every load, so
+  // a dismissed one naturally stops reappearing once it's no longer
+  // true (e.g. the sales jump that prompted it is now last week's
+  // history) without needing to track that here.
+  const [dismissedIdeaIds, setDismissedIdeaIds] = useState([])
+
   const loadTopSellers = () => {
     setLoading(true)
     setError('')
@@ -67,6 +78,28 @@ function Dashboard({ password }) {
     }
   }, [password])
 
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/dashboard-ideas', { headers: { 'x-app-password': password } })
+      .then(async (response) => {
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || 'Failed to load ideas.')
+        return body
+      })
+      .then((body) => {
+        if (!cancelled) setIdeas(body.ideas)
+      })
+      .catch((err) => {
+        if (!cancelled) setIdeasError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setIdeasLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [password])
+
   const handleSaveThreshold = async () => {
     const value = Number(thresholdInput)
     if (!Number.isInteger(value) || value < 0) {
@@ -97,6 +130,37 @@ function Dashboard({ password }) {
       <p className="subhead">Here's your shop at a glance.</p>
 
       <WeeklyReport password={password} />
+
+      <div className="dashboard-performers-box">
+        <h2>Ideas</h2>
+        <p className="subhead">A nudge from what your tracked competitors are up to, not just raw numbers.</p>
+
+        {ideasError && <p className="error">{ideasError}</p>}
+        {ideasLoading && <p className="subhead">Loading…</p>}
+
+        {!ideasLoading && !ideasError && (() => {
+          const visibleIdea = ideas.find((idea) => !dismissedIdeaIds.includes(idea.id))
+          if (!visibleIdea) {
+            return (
+              <p className="subhead">
+                No new ideas right now — check back after the next weekly competitor pull.
+              </p>
+            )
+          }
+          return (
+            <p className="dashboard-performer-reason">
+              {visibleIdea.text}{' '}
+              <button
+                type="button"
+                className="competitor-change-link"
+                onClick={() => setDismissedIdeaIds((prev) => [...prev, visibleIdea.id])}
+              >
+                Dismiss
+              </button>
+            </p>
+          )
+        })()}
+      </div>
 
       <div className="dashboard-row summary-cards">
         <div className="summary-card">

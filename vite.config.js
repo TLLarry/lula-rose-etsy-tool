@@ -27,11 +27,12 @@ import { createEtsyTaxonomyHandler } from './server/etsyTaxonomy.js'
 import { createParseListingCsvHandler } from './server/listingRevampCsv.js'
 import { createRewriteListingHandler } from './server/listingRevampRewrite.js'
 import {
-  createCompetitorsHandler,
-  createCompetitorRefreshHandler,
+  createCompetitorShopsHandler,
+  createCompetitorShopRefreshHandler,
+  createCompetitorPriceLinkHandler,
   createShopListingsPickerHandler,
-  createCompetitorLinkListingHandler,
-} from './server/competitors.js'
+  createDashboardIdeasHandler,
+} from './server/competitorShops.js'
 import {
   createEtsyOAuthStartHandler,
   createEtsyOAuthCallbackHandler,
@@ -97,20 +98,27 @@ function etsyTitleWriterPlugin(env) {
         '/api/rewrite-listing',
         createRewriteListingHandler(env, passwordsMatch)
       )
-      // Must be registered before '/api/competitors' — connect middleware
-      // matches by path prefix, same reasoning as server.js.
+      // Must be registered before '/api/competitor-shops' — connect
+      // middleware matches by path prefix, same reasoning as server.js.
       server.middlewares.use(
-        '/api/competitors/refresh',
-        createCompetitorRefreshHandler(env, passwordsMatch)
+        '/api/competitor-shops/refresh',
+        createCompetitorShopRefreshHandler(env, passwordsMatch)
       )
       server.middlewares.use(
-        '/api/competitors/link-listing',
-        createCompetitorLinkListingHandler(env, passwordsMatch)
+        '/api/competitor-shops/price-link',
+        createCompetitorPriceLinkHandler(env, passwordsMatch)
       )
-      server.middlewares.use('/api/competitors', createCompetitorsHandler(env, passwordsMatch))
+      server.middlewares.use(
+        '/api/competitor-shops',
+        createCompetitorShopsHandler(env, passwordsMatch)
+      )
       server.middlewares.use(
         '/api/shop-listings',
         createShopListingsPickerHandler(env, passwordsMatch)
+      )
+      server.middlewares.use(
+        '/api/dashboard-ideas',
+        createDashboardIdeasHandler(env, passwordsMatch)
       )
       server.middlewares.use('/api/etsy-oauth/start', createEtsyOAuthStartHandler(env, passwordsMatch))
       server.middlewares.use('/api/etsy-oauth/callback', createEtsyOAuthCallbackHandler(env))

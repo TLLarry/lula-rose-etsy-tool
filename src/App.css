@@ -1131,6 +1131,23 @@ mark {
   gap: 12px;
 }
 
+/* The three fixed competitor-shop slots — side by side on wide screens,
+   stacking on narrow ones. Layout only: each slot still renders the
+   existing .competitor-card look below, no new colors here. */
+.competitor-shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+/* Reuses .summary-cards' own grid, just narrower stat tiles since three
+   of these sit inside one competitor-shop-grid column instead of a
+   full-width dashboard row. */
+.competitor-shop-stats {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
 .competitor-card {
   display: flex;
   flex-direction: column;

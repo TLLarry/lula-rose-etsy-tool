@@ -76,7 +76,9 @@ const TABLE_NAMES = [
   'uploads',
   'reminder_runs',
   'reminder_log',
-  'competitors',
+  'competitor_shops',
+  'competitor_shop_snapshots',
+  'competitor_price_links',
   'shop_listings',
   'daily_listing_stats',
   'etsy_oauth_tokens',
@@ -172,12 +174,6 @@ function initializeSchema(realDbInstance) {
   -- (title, tags, photos, open year, total sales) via the Etsy API;
   -- nothing here fetches or caches that yet, this is only the seller's
   -- own saved list of links to track.
-  CREATE TABLE IF NOT EXISTS competitors (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    url TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
   -- The shop's own tracked listings (nightly-synced via Etsy OAuth, see
   -- server/etsyShopStats.js) — separate from the long-dead "listings"
   -- table above (exported helpers, never called anywhere; left alone
@@ -390,22 +386,85 @@ function initializeSchema(realDbInstance) {
   );
 
   CREATE INDEX IF NOT EXISTS idx_section_revamp_progress_section ON section_revamp_progress(section_id);
+
+  -- Competitor Benchmarking's three tracked-shop slots. shop_id is
+  -- Etsy's own numeric shop id (resolved once from a pasted shop link
+  -- via GET /shops?shop_name=), UNIQUE so the same shop can't occupy two
+  -- slots at once. Enforcing "at most 3" is app-logic (in
+  -- server/competitorShops.js), not a schema constraint, since SQLite
+  -- has no clean way to cap row count declaratively.
+  CREATE TABLE IF NOT EXISTS competitor_shops (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shop_id TEXT NOT NULL UNIQUE,
+    shop_name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    icon_url TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_synced_at TEXT
+  );
+
+  -- One row per (competitor_shops, week) — kept as history (never
+  -- overwritten) so every diff (new sales, new reviews, new listings)
+  -- always has a real previous snapshot to compare against, the same
+  -- "store history, aggregate on read" convention daily_listing_stats
+  -- already uses. listings_json is a compact per-listing array
+  -- ([{listingId, title, url, priceCents, tags, taxonomyId,
+  -- creationTimestamp}]) pulled from the public, API-key-only
+  -- GET /shops/{id}/listings/active — review_counts_by_listing_json is
+  -- the all-time review tally per listing from paginating
+  -- GET /shops/{id}/reviews (capped — see server/competitorShops.js),
+  -- used as the "best sellers" proxy the seller explicitly approved in
+  -- place of Etsy's non-existent public best-seller ranking.
+  -- reviews_last_30d_by_listing_json is the same reviews pull filtered
+  -- to the last 30 days, for the "which products are getting reviews
+  -- right now" flag.
+  CREATE TABLE IF NOT EXISTS competitor_shop_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    competitor_shop_id INTEGER NOT NULL REFERENCES competitor_shops(id),
+    snapshot_date TEXT NOT NULL,
+    listing_active_count INTEGER,
+    num_favorers INTEGER,
+    transaction_sold_count INTEGER,
+    review_average REAL,
+    review_count INTEGER,
+    listings_json TEXT NOT NULL,
+    review_counts_by_listing_json TEXT NOT NULL,
+    reviews_last_30d_by_listing_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(competitor_shop_id, snapshot_date)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_competitor_shop_snapshots_shop ON competitor_shop_snapshots(competitor_shop_id);
+
+  -- Manual "this competitor listing vs. this one of mine" price-match
+  -- pairs (the "extend the existing manual link" approach, generalized
+  -- from the old single competitor->listing link to allow several pairs
+  -- per tracked shop, since a whole shop has many "products similar to
+  -- mine"). Prices are refreshed alongside the weekly shop snapshot
+  -- (not fetched live on every page load) and the previous competitor
+  -- price is kept specifically so a sharp price drop can be flagged.
+  CREATE TABLE IF NOT EXISTS competitor_price_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    competitor_shop_id INTEGER NOT NULL REFERENCES competitor_shops(id),
+    competitor_listing_id TEXT NOT NULL,
+    competitor_listing_title TEXT NOT NULL,
+    competitor_listing_url TEXT NOT NULL,
+    my_listing_id INTEGER NOT NULL REFERENCES shop_listings(id),
+    last_competitor_price_cents INTEGER,
+    previous_competitor_price_cents INTEGER,
+    last_my_price_cents INTEGER,
+    last_checked_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(competitor_shop_id, competitor_listing_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_competitor_price_links_shop ON competitor_price_links(competitor_shop_id);
 `)
 
   // SQLite has no `ADD COLUMN IF NOT EXISTS` — this checks PRAGMA
   // table_info first so re-running it on every boot (like the
   // CREATE TABLE IF NOT EXISTS block above) is a safe no-op once the
   // column already exists.
-  ensureColumn(realDbInstance, 'competitors', 'title', 'TEXT')
-  ensureColumn(realDbInstance, 'competitors', 'tags_json', 'TEXT')
-  ensureColumn(realDbInstance, 'competitors', 'thumbnail_url', 'TEXT')
-  ensureColumn(realDbInstance, 'competitors', 'last_synced_at', 'TEXT')
-  // Which of the seller's OWN shop_listings rows this competitor's tags
-  // should be compared against, for the tag-gap comparison — nullable
-  // until the seller picks one, since there's no automatic way to know
-  // which of their listings "corresponds" to a given competitor.
-  ensureColumn(realDbInstance, 'competitors', 'linked_listing_id', 'INTEGER')
-
   // The last cumulative views/num_favorers Etsy reported for this
   // listing, as of the most recent sync — the baseline
   // server/etsyShopStats.js diffs the NEXT sync's cumulative total
@@ -503,56 +562,134 @@ function logReminderSend({ eventId, checkDate, slot, status, messageId, error })
   return result.lastInsertRowid
 }
 
-// Joins in the linked shop_listings row (if any) so the tag-gap
-// comparison on the frontend has both sides' tags in one response — no
-// second fetch needed per competitor. Aliased distinctly from the
-// competitor's own title/tags_json/thumbnail_url columns so neither
-// side clobbers the other in the result row.
-function listCompetitors() {
-  return db
-    .prepare(
-      `SELECT
-         competitors.*,
-         shop_listings.title AS linked_listing_title,
-         shop_listings.tags_json AS linked_listing_tags_json,
-         shop_listings.thumbnail_url AS linked_listing_thumbnail_url
-       FROM competitors
-       LEFT JOIN shop_listings ON shop_listings.id = competitors.linked_listing_id
-       ORDER BY competitors.created_at DESC`
-    )
-    .all()
+// --- competitor_shops / competitor_shop_snapshots / competitor_price_links ---
+
+function listCompetitorShops() {
+  return db.prepare(`SELECT * FROM competitor_shops ORDER BY created_at ASC`).all()
 }
 
-function getCompetitorById(id) {
-  return db.prepare(`SELECT * FROM competitors WHERE id = ?`).get(id)
+function countCompetitorShops() {
+  return db.prepare(`SELECT COUNT(*) AS count FROM competitor_shops`).get().count
 }
 
-function addCompetitor(url) {
-  const result = db.prepare(`INSERT INTO competitors (url) VALUES (?)`).run(url)
+function getCompetitorShopById(id) {
+  return db.prepare(`SELECT * FROM competitor_shops WHERE id = ?`).get(id)
+}
+
+function addCompetitorShop({ shopId, shopName, url, iconUrl }) {
+  const result = db
+    .prepare(`INSERT INTO competitor_shops (shop_id, shop_name, url, icon_url) VALUES (?, ?, ?, ?)`)
+    .run(String(shopId), shopName, url, iconUrl ?? null)
   return result.lastInsertRowid
 }
 
 // True if a row was actually deleted — lets the handler tell "already
-// gone" apart from a real failure.
-function removeCompetitor(id) {
-  const result = db.prepare(`DELETE FROM competitors WHERE id = ?`).run(id)
+// gone" apart from a real failure. Snapshots/price links for this shop
+// are cleaned up too so a re-added shop later doesn't inherit stale
+// history under a reused row id.
+function removeCompetitorShop(id) {
+  db.prepare(`DELETE FROM competitor_shop_snapshots WHERE competitor_shop_id = ?`).run(id)
+  db.prepare(`DELETE FROM competitor_price_links WHERE competitor_shop_id = ?`).run(id)
+  const result = db.prepare(`DELETE FROM competitor_shops WHERE id = ?`).run(id)
   return result.changes > 0
 }
 
-// Links (or re-links) a competitor to one of the seller's own
-// shop_listings rows, for the tag-gap comparison. Passing null clears
-// the link (e.g. if the picked listing gets removed later).
-function linkCompetitorListing(competitorId, listingId) {
-  db.prepare(`UPDATE competitors SET linked_listing_id = ? WHERE id = ?`).run(
-    listingId ?? null,
-    competitorId
-  )
+function touchCompetitorShopSyncedAt(id) {
+  db.prepare(`UPDATE competitor_shops SET last_synced_at = datetime('now') WHERE id = ?`).run(id)
 }
 
-function updateCompetitorSnapshot(id, { title, tagsJson, thumbnailUrl }) {
+function saveCompetitorShopSnapshot({
+  competitorShopId,
+  snapshotDate,
+  listingActiveCount,
+  numFavorers,
+  transactionSoldCount,
+  reviewAverage,
+  reviewCount,
+  listingsJson,
+  reviewCountsByListingJson,
+  reviewsLast30dByListingJson,
+}) {
   db.prepare(
-    `UPDATE competitors SET title = ?, tags_json = ?, thumbnail_url = ?, last_synced_at = datetime('now') WHERE id = ?`
-  ).run(title ?? null, tagsJson ?? null, thumbnailUrl ?? null, id)
+    `INSERT INTO competitor_shop_snapshots
+       (competitor_shop_id, snapshot_date, listing_active_count, num_favorers, transaction_sold_count,
+        review_average, review_count, listings_json, review_counts_by_listing_json, reviews_last_30d_by_listing_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(competitor_shop_id, snapshot_date) DO UPDATE SET
+       listing_active_count = excluded.listing_active_count,
+       num_favorers = excluded.num_favorers,
+       transaction_sold_count = excluded.transaction_sold_count,
+       review_average = excluded.review_average,
+       review_count = excluded.review_count,
+       listings_json = excluded.listings_json,
+       review_counts_by_listing_json = excluded.review_counts_by_listing_json,
+       reviews_last_30d_by_listing_json = excluded.reviews_last_30d_by_listing_json`
+  ).run(
+    competitorShopId,
+    snapshotDate,
+    listingActiveCount ?? null,
+    numFavorers ?? null,
+    transactionSoldCount ?? null,
+    reviewAverage ?? null,
+    reviewCount ?? null,
+    listingsJson,
+    reviewCountsByListingJson,
+    reviewsLast30dByListingJson
+  )
+  touchCompetitorShopSyncedAt(competitorShopId)
+}
+
+// Most recent snapshot, and the one immediately before it (for the
+// week-over-week diff) — null for `previous` when a shop has only ever
+// been snapshotted once (nothing to diff against yet).
+function getCompetitorShopSnapshots(competitorShopId) {
+  const rows = db
+    .prepare(
+      `SELECT * FROM competitor_shop_snapshots WHERE competitor_shop_id = ? ORDER BY snapshot_date DESC LIMIT 2`
+    )
+    .all(competitorShopId)
+  return { latest: rows[0] || null, previous: rows[1] || null }
+}
+
+function listCompetitorPriceLinks(competitorShopId) {
+  return db
+    .prepare(`SELECT * FROM competitor_price_links WHERE competitor_shop_id = ? ORDER BY created_at ASC`)
+    .all(competitorShopId)
+}
+
+function addCompetitorPriceLink({
+  competitorShopId,
+  competitorListingId,
+  competitorListingTitle,
+  competitorListingUrl,
+  myListingId,
+}) {
+  const result = db
+    .prepare(
+      `INSERT INTO competitor_price_links
+         (competitor_shop_id, competitor_listing_id, competitor_listing_title, competitor_listing_url, my_listing_id)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(competitor_shop_id, competitor_listing_id) DO UPDATE SET
+         my_listing_id = excluded.my_listing_id,
+         competitor_listing_title = excluded.competitor_listing_title,
+         competitor_listing_url = excluded.competitor_listing_url`
+    )
+    .run(competitorShopId, String(competitorListingId), competitorListingTitle, competitorListingUrl, myListingId)
+  return result.lastInsertRowid
+}
+
+function removeCompetitorPriceLink(id) {
+  const result = db.prepare(`DELETE FROM competitor_price_links WHERE id = ?`).run(id)
+  return result.changes > 0
+}
+
+function updateCompetitorPriceLinkPrices(id, { competitorPriceCents, myPriceCents }) {
+  const existing = db.prepare(`SELECT last_competitor_price_cents FROM competitor_price_links WHERE id = ?`).get(id)
+  db.prepare(
+    `UPDATE competitor_price_links
+       SET previous_competitor_price_cents = ?, last_competitor_price_cents = ?, last_my_price_cents = ?, last_checked_at = datetime('now')
+     WHERE id = ?`
+  ).run(existing?.last_competitor_price_cents ?? null, competitorPriceCents ?? null, myPriceCents ?? null, id)
 }
 
 // --- app_settings: small key-value store for live-adjustable thresholds ---
@@ -694,6 +831,10 @@ function setListingSeasonal(listingId, isSeasonal) {
 
 function getShopListings() {
   return db.prepare(`SELECT * FROM shop_listings ORDER BY title`).all()
+}
+
+function getShopListingById(id) {
+  return db.prepare(`SELECT * FROM shop_listings WHERE id = ?`).get(id)
 }
 
 function getListingsCreatedSince(isoDate) {
@@ -1379,12 +1520,17 @@ export {
   logReminderRun,
   hasReminderBeenSent,
   logReminderSend,
-  listCompetitors,
-  getCompetitorById,
-  addCompetitor,
-  removeCompetitor,
-  updateCompetitorSnapshot,
-  linkCompetitorListing,
+  listCompetitorShops,
+  countCompetitorShops,
+  getCompetitorShopById,
+  addCompetitorShop,
+  removeCompetitorShop,
+  saveCompetitorShopSnapshot,
+  getCompetitorShopSnapshots,
+  listCompetitorPriceLinks,
+  addCompetitorPriceLink,
+  removeCompetitorPriceLink,
+  updateCompetitorPriceLinkPrices,
   getSetting,
   setSetting,
   getAllSettings,
@@ -1393,6 +1539,7 @@ export {
   upsertShopListing,
   setListingSeasonal,
   getShopListings,
+  getShopListingById,
   getListingsCreatedSince,
   getShopListingLastKnownCounts,
   updateListingLastKnownCounts,

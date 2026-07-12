@@ -8,19 +8,20 @@
 // never touch the Claude/Anthropic API.
 import { isEtsyOAuthConnected } from './etsyOAuth.js'
 import { syncShopListingsAndStats } from './etsyShopStats.js'
-import { refreshCompetitorData } from './competitors.js'
+import { runWeeklyCompetitorShopRefresh } from './competitorShops.js'
 import { getTagScores } from './analysis.js'
 import { runEtsyCoachReview } from './etsyCoach.js'
 import { generateAndStoreWeeklyReport } from './weeklyReport.js'
 import { writeWeeklySummary, isGoogleSheetsConfigured } from './googleSheets.js'
 import {
   getAvailableMonths,
-  listCompetitors,
+  listCompetitorShops,
   getLatestEtsyCoachFlags,
   saveTagScoreSnapshot,
   logNightlySyncStep,
   getRecentNightlySyncLog,
 } from './db.js'
+import { buildCompetitorShopView } from './competitorShops.js'
 import { RequestError, passwordsMatch as constantTimeEqual } from './listingApi.js'
 
 async function runStep(runDate, step, fn) {
@@ -60,7 +61,9 @@ async function runNightlySync(env) {
     })
   )
 
-  results.push(await runStep(runDate, 'competitor_refresh', () => refreshCompetitorData(env)))
+  results.push(
+    await runStep(runDate, 'competitor_shop_refresh', () => runWeeklyCompetitorShopRefresh(env))
+  )
 
   results.push(
     await runStep(runDate, 'tag_scores', () => {
@@ -88,7 +91,7 @@ async function runNightlySync(env) {
         return { skipped: true, reason: "Google Sheets not configured yet — send the service account key + Sheet URL." }
       }
       const { reviewDate, flags } = getLatestEtsyCoachFlags()
-      const competitors = listCompetitors()
+      const competitors = listCompetitorShops().map(buildCompetitorShopView)
       return writeWeeklySummary(env, { reviewDate: reviewDate || runDate, flags, competitors })
     })
   )
