@@ -131,12 +131,21 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   // paused/stopped" (either hasn't run yet, or ran to completion) —
   // distinct from 'paused'/'stopped' so the UI can say WHY it isn't
   // running right now, even though resuming works identically either
-  // way (same processed/not-processed tracking). Refs, not state, for
-  // pauseRequested/stopRequested: the batch loop is a single long-lived
-  // async function, and it needs to observe a click that happens WHILE
-  // it's already running — a state variable captured in that function's
-  // closure at start time would never see a later setState.
+  // way (same processed/not-processed tracking).
+  //
+  // BOTH a ref AND a state variable exist for pause/stop, on purpose,
+  // for two different readers: the loop (an already-running async
+  // function) reads the REF — a plain state variable captured in its
+  // closure at start time would never see a later setState, so the ref
+  // is the only way the loop can observe a click that happens WHILE
+  // it's mid-flight. The BUTTON's own rendered appearance reads the
+  // STATE — mutating only the ref (as an earlier version of this code
+  // did) never triggers a re-render, so the click was structurally
+  // invisible no matter how long you waited. Every place that sets one
+  // sets both, together, in the same statement.
   const [sectionStopReason, setSectionStopReason] = useState(null)
+  const [pauseRequested, setPauseRequested] = useState(false)
+  const [stopRequested, setStopRequested] = useState(false)
   const pauseRequestedRef = useRef(false)
   const stopRequestedRef = useRef(false)
 
@@ -291,12 +300,15 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     // keep silently creating real drafts for the OLD section even
     // after its own UI has disappeared (sectionInfo about to be reset).
     stopRequestedRef.current = true
+    pauseRequestedRef.current = true
     const input = listingUrl.trim()
     if (LISTING_URL_PATTERN.test(input)) {
       setSectionInfo(null)
       setSectionResults([])
       setSectionError('')
       setSectionStopReason(null)
+      setPauseRequested(false)
+      setStopRequested(false)
       await handleLoadListing()
       return
     }
@@ -318,6 +330,8 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     setSectionInfo(null)
     setSectionResults([])
     setSectionStopReason(null)
+    setPauseRequested(false)
+    setStopRequested(false)
     try {
       const response = await fetch('/api/resolve-section', {
         method: 'POST',
@@ -340,25 +354,51 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     }
   }
 
-  // Called by Play (both the initial start and every "Resume" click
-  // after a pause/stop) — recomputes what's still remaining from the
-  // LIVE sectionResults each time, not the one-time snapshot from
-  // /api/resolve-section, so a resume within the same session correctly
-  // skips whatever THIS session already finished (not just what was
-  // done before the section was first loaded).
+  // Called by the initial "Revamp Entire Section" click AND by the
+  // Pause/Resume toggle's own "actually restart" branch below —
+  // recomputes what's still remaining from the LIVE sectionResults each
+  // time, not the one-time snapshot from /api/resolve-section, so a
+  // resume within the same session correctly skips whatever THIS
+  // session already finished (not just what was done before the
+  // section was first loaded).
   const handlePlaySection = () => {
     if (!sectionInfo || processingSection) return
     pauseRequestedRef.current = false
     stopRequestedRef.current = false
+    setPauseRequested(false)
+    setStopRequested(false)
     setSectionStopReason(null)
     handleRevampSection()
   }
 
-  // Sets a flag the running loop checks after the CURRENT CLUSTER
-  // finishes — never mid-listing, per the record-player rule ("stops
-  // after the current cluster finishes, don't cut off mid-listing").
-  const handlePauseSection = () => {
-    pauseRequestedRef.current = true
+  // ONE toggle button, two states — Pause (unhighlighted) and Resume
+  // (highlighted), per the exact spec: clicking it flips the visible
+  // state IMMEDIATELY (setPauseRequested, real React state — the ref
+  // alone was the bug: mutating a ref never triggers a re-render, so a
+  // previous version of this button could never visibly change no
+  // matter how long you waited). Three cases:
+  //  - Not paused/requested yet -> request a pause. The loop (which
+  //    reads the REF) only actually stops at the next cluster boundary,
+  //    but the button itself flips to "Resume"/highlighted right now,
+  //    matching "the moment I click Pause" in the spec, not "the moment
+  //    the cluster finishes."
+  //  - Paused/requested, loop still finishing out the cluster
+  //    (processingSection still true) -> clicking again CANCELS the
+  //    pending request; the loop just keeps going, nothing to restart.
+  //  - Paused/requested, loop has actually stopped (processingSection
+  //    false) -> clicking again actually restarts it via
+  //    handlePlaySection.
+  const handleTogglePauseSection = () => {
+    if (!pauseRequested) {
+      pauseRequestedRef.current = true
+      setPauseRequested(true)
+      return
+    }
+    pauseRequestedRef.current = false
+    setPauseRequested(false)
+    if (!processingSection) {
+      handlePlaySection()
+    }
   }
 
   // Sets a flag the running loop checks after the CURRENT LISTING
@@ -367,8 +407,30 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   // and its progress being recorded would leave an untracked draft that
   // a later run could duplicate. Whatever's already been created as a
   // draft stays exactly as it is; this only stops further processing.
+  // setStopRequested (real state, not just the ref) is what makes the
+  // button visibly react the instant it's clicked, same fix as Pause
+  // above — the loop itself still finishes the current listing before
+  // actually stopping, but the button shouldn't wait for that to show
+  // the click registered.
+  //
+  // Two cases: the loop is actively running (normal case — flag it,
+  // the loop notices at its next per-listing checkpoint and updates
+  // state itself), or the run is already PAUSED with no loop currently
+  // executing at all (pauseRequested true, processingSection false) —
+  // there's nothing for a flag to be noticed BY, so this transitions
+  // straight to 'stopped' itself instead of setting a flag nobody would
+  // ever check.
   const handleStopSection = () => {
-    stopRequestedRef.current = true
+    if (processingSection) {
+      stopRequestedRef.current = true
+      setStopRequested(true)
+      return
+    }
+    if (pauseRequested) {
+      pauseRequestedRef.current = false
+      setPauseRequested(false)
+      setSectionStopReason('stopped')
+    }
   }
 
   // The actual batch write action. Runs every NOT-YET-DONE listing in
@@ -518,16 +580,31 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       if (stopRequestedRef.current) {
         setProcessingSection(false)
         setSectionStopReason('stopped')
+        // The "stopping…" indicator's job is done now that the whole
+        // button cluster is about to change to the Resume button — but
+        // pauseRequested is deliberately left alone: if Stop was
+        // clicked while the Pause toggle was already showing "Resume"/
+        // highlighted, it should stay that way (still visually
+        // "paused"), not silently flip back to "Pause" underneath the
+        // now-hidden toggle button.
+        setStopRequested(false)
         return
       }
       const atClusterBoundary = (i + 1) % SECTION_CLUSTER_SIZE === 0
       if (atClusterBoundary && pauseRequestedRef.current) {
         setProcessingSection(false)
         setSectionStopReason('paused')
+        // pauseRequested stays true here, on purpose — the toggle
+        // button must STAY highlighted/"Resume" while actually paused,
+        // per the spec ("stays that way while paused").
         return
       }
     }
 
+    // Ran to completion with nothing pending — nothing left to show as
+    // "requested."
+    setPauseRequested(false)
+    setStopRequested(false)
     setProcessingSection(false)
   }
 
@@ -990,6 +1067,8 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     setProcessingSection(false)
     setSectionError('')
     setSectionStopReason(null)
+    setPauseRequested(false)
+    setStopRequested(false)
 
     setCsvFile(null)
     setParsingCsv(false)
@@ -1266,7 +1345,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                   {doneCount} already revamped, {remainingCount} remaining.
                 </p>
                 <div className="draft-actions">
-                  {!processingSection && (
+                  {!processingSection && !pauseRequested && (
                     <button
                       type="button"
                       className="revamp-button"
@@ -1280,17 +1359,22 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                           : `Revamp Entire Section (${remainingCount} listing${remainingCount === 1 ? '' : 's'})`}
                     </button>
                   )}
-                  {processingSection && (
+                  {(processingSection || pauseRequested) && (
                     <>
-                      <button type="button" className="revamp-button" onClick={handlePauseSection}>
-                        Pause
+                      <button
+                        type="button"
+                        className={`revamp-button${pauseRequested ? ' pressed-button' : ''}`}
+                        onClick={handleTogglePauseSection}
+                      >
+                        {pauseRequested ? 'Resume' : 'Pause'}
                       </button>
                       <button
                         type="button"
-                        className="revamp-button secondary-button"
+                        className={`revamp-button${stopRequested ? ' pressed-button' : ' secondary-button'}`}
                         onClick={handleStopSection}
+                        disabled={stopRequested && processingSection}
                       >
-                        Stop
+                        {stopRequested && processingSection ? 'Stopping…' : 'Stop'}
                       </button>
                     </>
                   )}
@@ -1300,11 +1384,17 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                   step. Safe to close this tab and come back later: re-loading this same section
                   will skip anything already done and pick up where it left off.
                 </p>
-                {processingSection && (
+                {processingSection && !pauseRequested && (
                   <p className="subhead">
                     Revamping… ({doneCount} of {totalCount} done). Pause stops after the current
                     cluster of {SECTION_CLUSTER_SIZE} finishes; Stop ends the run after the
                     current listing — either way, nothing already drafted is undone.
+                  </p>
+                )}
+                {processingSection && pauseRequested && (
+                  <p className="guessed-badge">
+                    Pausing after this cluster finishes — {doneCount} of {totalCount} done so far.
+                    Click Resume again to cancel and keep going.
                   </p>
                 )}
                 {!processingSection && sectionStopReason === 'paused' && (
@@ -1319,11 +1409,15 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
                     as-is; click Resume to continue.
                   </p>
                 )}
-                {!processingSection && !sectionStopReason && remainingCount === 0 && sectionResults.length > 0 && (
-                  <p className="draft-success">
-                    Done — all {totalCount} listings in this section now have drafts.
-                  </p>
-                )}
+                {!processingSection &&
+                  !sectionStopReason &&
+                  !pauseRequested &&
+                  remainingCount === 0 &&
+                  sectionResults.length > 0 && (
+                    <p className="draft-success">
+                      Done — all {totalCount} listings in this section now have drafts.
+                    </p>
+                  )}
                 {sectionResults.length > 0 && (
                   <ul className="draft-image-errors">
                     {sectionResults.map((result) => (
