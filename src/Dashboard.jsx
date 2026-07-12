@@ -11,7 +11,7 @@ function formatMoney(cents) {
 // Report card were removed — both were the same "which listings are
 // struggling" signal already covered by This Week's tasks and Trends
 // below, just repeated in a third place with no action attached.
-function Dashboard({ password, onRevampTask }) {
+function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
   const [tasks, setTasks] = useState([])
   const [tasksLoading, setTasksLoading] = useState(true)
   const [tasksError, setTasksError] = useState('')
@@ -311,16 +311,27 @@ function Dashboard({ password, onRevampTask }) {
             )
           }
           return (
-            <p className="dashboard-performer-reason">
-              {visibleIdea.text}{' '}
-              <button
-                type="button"
-                className="competitor-change-link"
-                onClick={() => setDismissedIdeaIds((prev) => [...prev, visibleIdea.id])}
-              >
-                Dismiss
-              </button>
-            </p>
+            <div className="dashboard-task-row">
+              <p className="dashboard-task-text">{visibleIdea.text}</p>
+              <div className="dashboard-task-actions">
+                {visibleIdea.competitorListingUrl && (
+                  <button
+                    type="button"
+                    className="revamp-button"
+                    onClick={() => onCreateSimilarListing(visibleIdea.competitorListingUrl)}
+                  >
+                    Create Similar Listing
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="competitor-change-link"
+                  onClick={() => setDismissedIdeaIds((prev) => [...prev, visibleIdea.id])}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
           )
         })()}
       </div>

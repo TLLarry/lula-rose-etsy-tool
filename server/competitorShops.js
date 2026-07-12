@@ -727,6 +727,7 @@ function buildCompetitorIdeas() {
         ideas.push({
           id: `seasonal-${shop.id}-${listing.listingId}`,
           text: `${shop.shopName} just listed "${listing.title}" — competitors are already stocking up for ${event.name}.`,
+          competitorListingUrl: listing.url,
         })
       }
     }
@@ -735,6 +736,7 @@ function buildCompetitorIdeas() {
       ideas.push({
         id: `best-seller-${shop.id}-${shop.bestSellers[0].listingId}`,
         text: `${shop.shopName}'s best seller changed to "${shop.bestSellers[0].title}" — worth a look at what's driving it.`,
+        competitorListingUrl: shop.bestSellers[0].url,
       })
     }
 
@@ -742,6 +744,7 @@ function buildCompetitorIdeas() {
       ideas.push({
         id: `sales-jump-${shop.id}`,
         text: `${shop.shopName} had a notable jump in sales this week (approximately +${shop.newSalesSinceLastCheck}) — worth a look at what's driving it.`,
+        competitorListingUrl: null,
       })
     }
 
@@ -750,6 +753,7 @@ function buildCompetitorIdeas() {
         ideas.push({
           id: `hot-reviews-${shop.id}-${item.listingId}`,
           text: `${shop.shopName}'s "${item.title}" picked up ${item.count} reviews in the last 30 days — worth adding a similar item to your shop.`,
+          competitorListingUrl: item.url,
         })
       }
     }

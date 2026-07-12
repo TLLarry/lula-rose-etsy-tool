@@ -104,6 +104,8 @@ function ListingRevamp({
   autoRevamp,
   autoRevampTaskKey,
   autoRevampListingId,
+  pendingCompetitorListingUrl,
+  onPendingCompetitorListingConsumed,
 }) {
   const [listingUrl, setListingUrl] = useState('')
   const [competitorListingUrl, setCompetitorListingUrl] = useState('')
@@ -631,7 +633,14 @@ function ListingRevamp({
   // title/tags/description/images for comparison; none of the
   // draft-creation fields (quantity/price/taxonomy/etc.) apply to a
   // listing this shop doesn't own.
-  const handleLoadCompetitorListing = async () => {
+  // urlOverride is only ever a real string when called from the
+  // Dashboard Ideas hand-off effect below — the button's own
+  // onClick={handleLoadCompetitorListing} still passes the click event
+  // as the first arg, so this only trusts urlOverride when it's
+  // actually a string, never falling through to using the event object
+  // as a URL.
+  const handleLoadCompetitorListing = async (urlOverride) => {
+    const effectiveUrl = typeof urlOverride === 'string' ? urlOverride : competitorListingUrl
     setLoadingCompetitor(true)
     setCompetitorError('')
     setCompetitorListing(null)
@@ -639,7 +648,7 @@ function ListingRevamp({
       const response = await fetch('/api/load-competitor-listing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-        body: JSON.stringify({ url: competitorListingUrl }),
+        body: JSON.stringify({ url: effectiveUrl }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || "Failed to load the competitor's listing.")
@@ -667,6 +676,21 @@ function ListingRevamp({
     // isn't a meaningful dependency here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingListingUrl])
+
+  // Dashboard Ideas hand-off — "Create Similar Listing" lands here with
+  // the COMPETITOR's listing pre-loaded (into the Competitor's Listing
+  // Link field, not Your Etsy Listing Link), so their real title/tags/
+  // description are right there as reference. Deliberately does NOT
+  // auto-run Combine Both, unlike the revamp hand-off above — Combine
+  // Both needs the seller's OWN similar listing loaded too, and there's
+  // no reliable way to guess which of their listings that should be.
+  useEffect(() => {
+    if (!pendingCompetitorListingUrl) return
+    setCompetitorListingUrl(pendingCompetitorListingUrl)
+    handleLoadCompetitorListing(pendingCompetitorListingUrl)
+    onPendingCompetitorListingConsumed()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCompetitorListingUrl])
 
   // Dashboard task hand-off, continued: each step only fires once the
   // PREVIOUS step's real result has landed in state, matching the exact
