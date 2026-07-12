@@ -47,9 +47,9 @@
   font-weight: 600;
   padding: 10px 20px;
   border-radius: 8px;
-  border: none;
+  border: 1px solid var(--border);
   color: var(--text-h);
-  background: var(--latte);
+  background: var(--bg);
   cursor: pointer;
   transition: opacity 0.2s;
 
@@ -97,9 +97,9 @@
     font-weight: 600;
     padding: 10px 20px;
     border-radius: 8px;
-    border: none;
-    color: #fff;
-    background: var(--accent);
+    border: 1px solid var(--border);
+    color: var(--text-h);
+    background: var(--bg);
     cursor: pointer;
     transition: opacity 0.2s;
 
@@ -130,17 +130,6 @@
     background: var(--accent-bg);
     border-color: var(--accent-border);
   }
-}
-
-/* Upload Photos only (not the Copy button, which also uses
-   .upload-button) — flat latte fill instead of white, and no hover
-   color change at all. Comes after .upload-button above so it wins on
-   the shared properties, including on hover. */
-#title-writer .upload-button.latte-button,
-#title-writer .upload-button.latte-button:not(:disabled):hover {
-  background: var(--latte);
-  border-color: var(--latte-border);
-  opacity: 1;
 }
 
 .thumbs {
@@ -209,17 +198,10 @@
 /* Section revamp batch panel only — white background instead of
    .result's default cream fill, same thin border/radius as every other
    card on the page (.summary-card uses the identical background/border
-   pair). Buttons inside this one panel (Pause/Stop/Resume/Revamp
-   Entire Section) match: white background, thin neutral border,
-   instead of the default tan .revamp-button fill. Scoped to just this
-   panel — no other .result box or button anywhere else is touched. */
+   pair). Its own buttons no longer need a separate override now that
+   .revamp-button's own default is white too. */
 .section-revamp-panel {
   background: var(--bg);
-}
-
-.section-revamp-panel .revamp-button {
-  background: var(--bg);
-  border-color: var(--border);
 }
 
 .result-section h2 {
@@ -520,9 +502,9 @@ mark {
   font-weight: 600;
   padding: 10px 20px;
   border-radius: 8px;
-  border: 1px solid var(--latte-border);
+  border: 1px solid var(--border);
   color: var(--text-h);
-  background: var(--latte);
+  background: var(--bg);
   cursor: pointer;
   transition: opacity 0.2s;
 
@@ -777,8 +759,8 @@ mark {
   align-self: flex-start;
   padding: 8px 16px;
   color: var(--text-h);
-  background: var(--latte);
-  border: 1px solid var(--latte-border);
+  background: var(--bg);
+  border: 1px solid var(--border);
   font-weight: 600;
   cursor: pointer;
 
@@ -794,20 +776,8 @@ mark {
   flex-wrap: wrap;
 }
 
-/* Distinguishes the higher-risk action (overwrites a listing that may
-   already be live) from Draft (always safe, always a new listing) —
-   same idea as a destructive-action button elsewhere, without being
-   quite that alarming since this isn't literally destructive. */
-.update-listing-button {
-  background: #fff3e0;
-  border-color: #e0a458;
-}
-
-/* Neutral, not risk-signaling like .update-listing-button above — Clear
-   only resets on-page state, nothing written to Etsy or saved anywhere,
-   so it doesn't need to look alarming. */
 .secondary-button {
-  background: transparent;
+  background: var(--bg);
 }
 
 /* Subtle "currently pressed/active" indicator — the section revamp
