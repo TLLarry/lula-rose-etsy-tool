@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
 import WeeklyReport from './WeeklyReport'
 
+function formatMoney(cents) {
+  if (typeof cents !== 'number') return '—'
+  return `$${(cents / 100).toFixed(2)}`
+}
+
 // Placeholder-only layout for the rest of this page — no data wiring yet.
 // Top 3 / Bottom 3 Performing Listings are both wired to real data (see
 // loadTopSellers/loadBottomPerformers below) — ranked by units sold in
@@ -23,6 +28,8 @@ function Dashboard({ password }) {
   const [ideas, setIdeas] = useState([])
   const [ideasLoading, setIdeasLoading] = useState(true)
   const [ideasError, setIdeasError] = useState('')
+
+  const [weeklyIncome, setWeeklyIncome] = useState(null)
   // Session-only — dismissing an idea just hides it from THIS view of
   // the list, it doesn't delete or persist anything server-side. Ideas
   // are recomputed fresh from current competitor data on every load, so
@@ -94,6 +101,25 @@ function Dashboard({ password }) {
       })
       .finally(() => {
         if (!cancelled) setIdeasLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [password])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/weekly-report', { headers: { 'x-app-password': password } })
+      .then(async (response) => {
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || 'Failed to load income data.')
+        return body
+      })
+      .then((body) => {
+        if (!cancelled) setWeeklyIncome(body.report)
+      })
+      .catch(() => {
+        // Non-fatal — the income tiles just stay at their loading dashes.
       })
     return () => {
       cancelled = true
@@ -188,16 +214,25 @@ function Dashboard({ password }) {
 
       <div className="dashboard-row summary-cards">
         <div className="summary-card">
-          <p className="summary-card-label">Orders</p>
-          <p className="summary-card-value">—</p>
+          <p className="summary-card-label">Units Sold This Week</p>
+          <p className="summary-card-value">{weeklyIncome?.hasData ? weeklyIncome.unitsSold : '—'}</p>
         </div>
         <div className="summary-card">
           <p className="summary-card-label">Weekly Gross Sales</p>
-          <p className="summary-card-value">—</p>
+          <p className="summary-card-value">
+            {weeklyIncome?.hasData ? formatMoney(weeklyIncome.grossSalesCents) : '—'}
+          </p>
         </div>
         <div className="summary-card">
-          <p className="summary-card-label">Net Sales</p>
-          <p className="summary-card-value">—</p>
+          <p className="summary-card-label">Avg Sale Value</p>
+          <p className="summary-card-value">
+            {weeklyIncome?.hasData && weeklyIncome.avgSaleValueCents != null
+              ? formatMoney(weeklyIncome.avgSaleValueCents)
+              : '—'}
+          </p>
+          <p className="summary-card-note">
+            Not "Net Sales" — Etsy fees aren't tracked yet, so this is gross revenue only.
+          </p>
         </div>
       </div>
 

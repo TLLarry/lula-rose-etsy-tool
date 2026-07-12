@@ -132,6 +132,21 @@ function buildSummaryText({ trendingUp, trendingDown, topPerformers, underperfor
 
 // referenceDate defaults to now, but accepts an explicit date for
 // deterministic testing of week-boundary behavior.
+// Real income figures for the week — unitsSold/revenueCents are exactly
+// what's actually stored (Etsy receipts, not an estimate). avgSaleValue
+// is a genuine derived metric; deliberately NOT calling anything here
+// "Net Sales" — this app has no visibility into Etsy fees or costs, so
+// showing a "net" number would be fabricating data Etsy never sent.
+function summarizeIncome(rows) {
+  const unitsSold = rows.reduce((sum, row) => sum + (row.unitsSold ?? 0), 0)
+  const grossSalesCents = rows.reduce((sum, row) => sum + (row.revenueCents ?? 0), 0)
+  return {
+    unitsSold,
+    grossSalesCents,
+    avgSaleValueCents: unitsSold > 0 ? Math.round(grossSalesCents / unitsSold) : null,
+  }
+}
+
 function generateWeeklyReport(referenceDate = new Date()) {
   const { thisWeekStart, thisWeekEnd, lastWeekStart, lastWeekEnd } = getWeekRanges(referenceDate)
   const thisWeekRows = getListingStatsForDateRange(thisWeekStart, thisWeekEnd)
@@ -148,6 +163,7 @@ function generateWeeklyReport(referenceDate = new Date()) {
       trendingDown: [],
       topPerformers: [],
       underperformers: [],
+      ...summarizeIncome([]),
     }
   }
 
@@ -237,6 +253,7 @@ function generateWeeklyReport(referenceDate = new Date()) {
     trendingDown: trendingDown.map(formatMovementRow),
     topPerformers,
     underperformers,
+    ...summarizeIncome(thisWeekRows),
   }
 }
 
