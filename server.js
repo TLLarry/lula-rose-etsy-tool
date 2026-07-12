@@ -151,6 +151,15 @@ app.use('/api/keyword-bank-scan', createKeywordBankScanHandler(env, passwordsMat
 app.use('/api/keyword-bank/keyword', createKeywordBankKeywordHandler(env, passwordsMatch))
 app.use('/api/keyword-bank', createKeywordBankHandler(env, passwordsMatch))
 
+// Clean URLs for the two public policy pages Pinterest's (and any other
+// OAuth provider's) app-review process needs a real, reachable link to
+// — deliberately NOT behind the app password, since outside reviewers
+// need to open these directly. Registered before express.static/the SPA
+// catch-all so /privacy and /terms resolve to these files instead of
+// falling through to index.html.
+app.get('/privacy', (req, res) => res.sendFile(path.join(distDir, 'privacy.html')))
+app.get('/terms', (req, res) => res.sendFile(path.join(distDir, 'terms.html')))
+
 app.use(express.static(distDir))
 
 // SPA fallback for any other route (e.g. a direct navigation/refresh).
