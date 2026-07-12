@@ -21,6 +21,7 @@
 // reports "Etsy isn't configured yet" instead of crashing.
 import { checkAppPassword } from './db.js'
 import { readJsonBody, RequestError } from './listingApi.js'
+import { decodeHtmlEntities } from './htmlEntities.js'
 
 const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
 
@@ -44,44 +45,6 @@ function parseListingIdFromUrl(rawUrl) {
   if (typeof rawUrl !== 'string') return null
   const match = rawUrl.match(/etsy\.com\/(?:[a-z]{2,3}\/)?listing\/(\d+)/i)
   return match ? match[1] : null
-}
-
-// Etsy's API returns title/description/tags as HTML-entity-encoded
-// strings even though this is a JSON API, not HTML — confirmed against
-// real listings (e.g. title `11&quot; Winter Green Latex Balloon`,
-// `80&#39;s Birthday Party`), presumably because the same text also
-// renders directly into Etsy's own listing pages. Decoded once here, at
-// the source, so every consumer of fetchEtsyListing (Listing Revamp,
-// Shop Stats, Keyword Bank scanning) gets clean text — there's no
-// scenario where the raw encoded form is the one actually wanted
-// downstream.
-const NAMED_HTML_ENTITIES = {
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-  nbsp: ' ',
-  hellip: '…',
-  mdash: '—',
-  ndash: '–',
-  rsquo: '’',
-  lsquo: '‘',
-  rdquo: '”',
-  ldquo: '“',
-}
-
-function decodeHtmlEntities(text) {
-  if (typeof text !== 'string' || !text.includes('&')) return text
-  return text.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (match, entity) => {
-    if (entity[0] === '#') {
-      const codePoint =
-        entity[1] === 'x' || entity[1] === 'X' ? parseInt(entity.slice(2), 16) : parseInt(entity.slice(1), 10)
-      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match
-    }
-    const lower = entity.toLowerCase()
-    return lower in NAMED_HTML_ENTITIES ? NAMED_HTML_ENTITIES[lower] : match
-  })
 }
 
 // Etsy returns image objects in whatever order, each with a `rank` for

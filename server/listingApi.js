@@ -8,6 +8,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import crypto from 'node:crypto'
 import { CATEGORIES } from '../src/categories.js'
+import { decodeHtmlEntities } from './htmlEntities.js'
 
 const ALLOWED_IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png']
 const MAX_IMAGES = 20
@@ -63,6 +64,26 @@ class RequestError extends Error {
     super(message)
     this.status = status
   }
+}
+
+// Claude occasionally writes its own prose with HTML-entity-encoded
+// apostrophes/quotes (e.g. "you&#39;ll find") — confirmed via a real
+// pushed draft that showed raw "&#39;" in text Claude generated itself,
+// not text pulled from Etsy (a separate bug from etsyListing.js's own
+// entity-decoding, same underlying fix). Decoded recursively so it
+// covers every string in a generation result (tags array, specs object,
+// faq question/answer pairs, etc.) in one call. Applied immediately
+// after parsing Claude's raw response, BEFORE any length-sensitive
+// processing (enforceTitleLength, header/tag length checks) — those
+// must count the true, final character length, not the longer raw
+// entity-encoded form.
+function decodeEntitiesDeep(value) {
+  if (typeof value === 'string') return decodeHtmlEntities(value)
+  if (Array.isArray(value)) return value.map(decodeEntitiesDeep)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, val]) => [key, decodeEntitiesDeep(val)]))
+  }
+  return value
 }
 
 // Buffer chunks and concat once at the end rather than repeated string
@@ -390,7 +411,9 @@ async function retryTitleLength(apiKey, description, keywords, images, title, pr
     })
     const textBlock = response.content.find((block) => block.type === 'text')
     if (textBlock) {
-      current = enforceTitleLength(textBlock.text.trim().replace(/^["']|["']$/g, ''))
+      current = enforceTitleLength(
+        decodeHtmlEntities(textBlock.text.trim().replace(/^["']|["']$/g, ''))
+      )
     }
     attempts += 1
   }
@@ -421,7 +444,9 @@ async function generateTitle(apiKey, description, keywords, images, provenKeywor
     throw new Error('Claude did not return a title.')
   }
 
-  let title = enforceTitleLength(textBlock.text.trim().replace(/^["']|["']$/g, ''))
+  let title = enforceTitleLength(
+    decodeHtmlEntities(textBlock.text.trim().replace(/^["']|["']$/g, ''))
+  )
 
   // Deterministic max-140 enforcement above always holds. Min-135 can't be
   // fixed by trimming, so this goes to the retry loop — if it's STILL short
@@ -682,7 +707,7 @@ async function retryTagCorrections(apiKey, context) {
   const textBlock = response.content.find((block) => block.type === 'text')
   if (!textBlock) return {}
   try {
-    return JSON.parse(textBlock.text)
+    return decodeEntitiesDeep(JSON.parse(textBlock.text))
   } catch {
     return {}
   }
@@ -734,7 +759,7 @@ async function retryHeaderLength(apiKey, { title, description, keywords }, heade
       try {
         const parsed = JSON.parse(textBlock.text)
         if (typeof parsed.header === 'string' && parsed.header.trim()) {
-          current = parsed.header.trim()
+          current = decodeHtmlEntities(parsed.header.trim())
         }
       } catch {
         // Keep `current` as-is; the loop retries again if attempts remain.
@@ -777,7 +802,7 @@ async function generateListingExtras(
     throw new Error('Claude did not return tags and description content.')
   }
 
-  const parsed = JSON.parse(textBlock.text)
+  const parsed = decodeEntitiesDeep(JSON.parse(textBlock.text))
   const rawTags = Array.isArray(parsed.tags) ? parsed.tags : []
   let header = typeof parsed.header === 'string' ? parsed.header : ''
 
