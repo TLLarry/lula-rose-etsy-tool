@@ -244,7 +244,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
   }
 
   const handleRewriteListing = async () => {
-    if (!csvResult || !rewriteDescription.trim()) return
+    if (!listing || !rewriteDescription.trim()) return
     setRewriting(true)
     setRewriteError('')
     setRewriteResult(null)
@@ -254,11 +254,15 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
         headers: { 'Content-Type': 'application/json', 'x-app-password': password },
         body: JSON.stringify({
           description: rewriteDescription,
-          // The curated 1-3 winning keywords (Day 19), not the full
-          // ranked list — seeding the rewrite with only what actually
-          // worked, rather than diluting the model's prompt with
-          // Average/Weak/Cut-candidate keywords too.
-          keywords: csvResult.topKeywords,
+          // CSV is optional — when uploaded, its curated 1-3 winning
+          // keywords (Day 19) seed the rewrite (only what actually
+          // worked, not the full Average/Weak/Cut-candidate list). With
+          // no CSV, falls back to the listing's OWN current title/tags
+          // instead, so the rewrite still has real signal beyond just
+          // the description — never blocked on a CSV existing at all.
+          keywords: csvResult
+            ? csvResult.topKeywords
+            : [{ keyword: listing.title }, ...listing.tags.map((tag) => ({ keyword: tag }))],
           // Day 21 — same shape the Listing Tool sends, so an uploaded
           // photo actually informs the rewrite instead of just sitting
           // in the UI unused.
@@ -518,6 +522,60 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
     }
   }
 
+  // Resets the entire page back to blank in one click — every field,
+  // upload, and generated result, not just the loaded listing. No
+  // confirm() dialog (unlike handleUpdateListing above): nothing here
+  // writes to Etsy or anywhere persistent, so there's nothing at risk
+  // beyond re-doing on-page work, and the whole point is a single click.
+  const handleClearAll = () => {
+    setListingUrl('')
+    setCompetitorListingUrl('')
+    setLoading(false)
+    setListing(null)
+    setError('')
+
+    setCsvFile(null)
+    setParsingCsv(false)
+    setCsvResult(null)
+    setCsvError('')
+    if (csvFileInputRef.current) csvFileInputRef.current.value = ''
+
+    setRewriteDescription('')
+    setRewriting(false)
+    setRewriteResult(null)
+    setRewriteError('')
+
+    setDraftTitle('')
+    setDraftTags([])
+    setDraftHeader('')
+    setDraftBody('')
+    setDraftQuantity('')
+    setDraftPrice('')
+    setDraftWhoMade('i_did')
+    setDraftIsSupply(false)
+    setDraftOccasion(null)
+    setDraftOccasionGuessed(false)
+    setDraftHoliday(null)
+    setDraftHolidayGuessed(false)
+    setDraftTaxonomyId(null)
+    setDraftTaxonomyLabel('')
+    setCreatingDraft(false)
+    setDraftCreateResult(null)
+    setDraftCreateError('')
+
+    setCreatingBalloonDrafts(false)
+    setBalloonDraftResults(null)
+
+    setUpdatingListing(false)
+    setUpdateListingResult(null)
+    setUpdateListingError('')
+
+    setPhotos([])
+    setPhotoError('')
+    if (photoFileInputRef.current) photoFileInputRef.current.value = ''
+    setCopiedAltId(null)
+  }
+
   // Recomputed on every render rather than stored in state — cheap, and
   // it needs to track draftTitle/draftHeader/draftBody live (the
   // fallback keyword scan should see whatever's currently in the review
@@ -649,17 +707,33 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       >
         {loading ? 'Loading…' : 'Load Listing'}
       </button>
-      {/* Not built yet — combining the competitor link above into an
-          automatic rewrite is future scope. Disabled rather than left
-          clickable-but-inert, so it doesn't look broken in the
-          meantime. Competitor-informed comparisons live on the
-          Competitor Benchmarking page today (tag-gap analysis against
-          a linked listing of yours). */}
-      <button type="button" className="revamp-button" disabled title="Coming soon">
-        Revamp My Listing
+      {/* Same action as the "Rewrite Listing" button further down (see
+          handleRewriteListing) — a shortcut so the seller doesn't have
+          to scroll to the CSV section just to trigger a rewrite when
+          they're not using a CSV at all. CSV is optional either way;
+          see handleRewriteListing's own comment. */}
+      <button
+        type="button"
+        className="revamp-button"
+        onClick={handleRewriteListing}
+        disabled={!listing || !rewriteDescription.trim() || rewriting}
+      >
+        {rewriting ? 'Revamping…' : 'Revamp My Listing'}
       </button>
+      {/* Not built yet — combining the competitor link above into an
+          automatic rewrite is future scope (the competitor link field
+          above isn't even wired to a fetch yet). Disabled rather than
+          left clickable-but-inert, so it doesn't look broken in the
+          meantime. Competitor-informed comparisons live on the
+          Competitor Benchmarking page today (tag-gap analysis against a
+          linked listing of yours). Once built, this should unlock once
+          BOTH listing and the competitor listing are loaded — no CSV
+          requirement either. */}
       <button type="button" className="revamp-button" disabled title="Coming soon">
         Combine Both
+      </button>
+      <button type="button" className="revamp-button secondary-button" onClick={handleClearAll}>
+        Clear
       </button>
 
       {error && <p className="error">{error}</p>}
@@ -832,17 +906,13 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
       <div className="listing-revamp-section">
         <h2>Rewrite This Listing</h2>
         <p className="subhead">
-          Rewrites the title, tags, and description built around the winning keywords above —
-          same locked rules as the Listing Tool: title uses the full 130-140 characters with the
-          strongest keyword front-loaded in the first 40, all 13 tags at 20 characters max with
-          no repeats, and a keyword-rich natural description.
+          Rewrites the title, tags, and description built around this listing's current title,
+          tags, description, and photos — same locked rules as the Listing Tool: title uses the
+          full 130-140 characters with the strongest keyword front-loaded in the first 40, all 13
+          tags at 20 characters max with no repeats, and a keyword-rich natural description. If
+          you've uploaded a stats CSV above, its winning keywords are used as additional input on
+          top of that; a CSV is optional, not required.
         </p>
-
-        {!csvResult && (
-          <p className="subhead">
-            Upload a stats CSV above first — the rewrite is built around its winning keywords.
-          </p>
-        )}
 
         <div className="field">
           <label htmlFor="rewrite-description">Current listing description</label>
@@ -859,7 +929,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
           type="button"
           className="revamp-button"
           onClick={handleRewriteListing}
-          disabled={!csvResult || !rewriteDescription.trim() || rewriting}
+          disabled={!listing || !rewriteDescription.trim() || rewriting}
         >
           {rewriting ? 'Rewriting…' : 'Rewrite Listing'}
         </button>

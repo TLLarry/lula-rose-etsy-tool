@@ -776,6 +776,13 @@ mark {
   border-color: #e0a458;
 }
 
+/* Neutral, not risk-signaling like .update-listing-button above — Clear
+   only resets on-page state, nothing written to Etsy or saved anywhere,
+   so it doesn't need to look alarming. */
+.secondary-button {
+  background: transparent;
+}
+
 .summary-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

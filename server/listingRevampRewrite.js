@@ -73,11 +73,14 @@ function buildKeywordsInput(keywords) {
   return `${phrases.join(', ')} (ranked by actual buyer search traffic for this listing, strongest first)`
 }
 
-// POST /api/rewrite-listing, body { description, keywords, taxonomyId? }.
-// `keywords` is the ranked array from /api/parse-listing-csv's
-// `keywords` (or `topKeywords`) field — each item shaped { keyword,
-// visits, ... }. `taxonomyId` is optional — Listing Revamp sends the
-// loaded listing's own carried-over category (same field
+// POST /api/rewrite-listing, body { description, keywords?, taxonomyId? }.
+// `keywords` is OPTIONAL — normally the ranked array from
+// /api/parse-listing-csv's `keywords` (or `topKeywords`) field when a
+// CSV was uploaded, each item shaped { keyword, visits, ... }; when no
+// CSV exists, Listing Revamp sends the listing's own current title/tags
+// in that same shape instead, so a rewrite still has real signal beyond
+// just the description. `taxonomyId` is optional — Listing Revamp sends
+// the loaded listing's own carried-over category (same field
 // createDraftListing/updateListing already use) so this can check the
 // Keyword Bank for that category; omitted entirely, the rewrite behaves
 // exactly as it did before Step 3 existed. Same x-app-password auth as
@@ -101,16 +104,14 @@ function createRewriteListingHandler(env, passwordsMatch) {
         taxonomyId,
       } = await readJsonBody(req)
 
-      if (!Array.isArray(rawKeywords) || rawKeywords.length === 0) {
-        throw new RequestError(
-          400,
-          'No winning keywords to rewrite around — upload a stats CSV for this listing first.'
-        )
-      }
-      const keywords = buildKeywordsInput(rawKeywords)
-      if (!keywords) {
-        throw new RequestError(400, 'No usable keywords were provided.')
-      }
+      // Optional — a CSV's winning keywords are an enhancement, not a
+      // requirement. When absent, the caller (Listing Revamp) sends the
+      // listing's own current title/tags in this same shape instead, so
+      // the rewrite still has real signal beyond just the description;
+      // buildKeywordsInput already degrades gracefully to '' (handled
+      // as "no keywords" by every prompt builder downstream) if even
+      // that's empty.
+      const keywords = Array.isArray(rawKeywords) ? buildKeywordsInput(rawKeywords) : ''
       if (typeof description !== 'string' || !description.trim()) {
         throw new RequestError(
           400,
