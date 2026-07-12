@@ -12,6 +12,10 @@ function formatMoney(cents) {
 // struggling" signal already covered by This Week's tasks and Trends
 // below, just repeated in a third place with no action attached.
 function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
+  const [shopProfile, setShopProfile] = useState(null)
+  const [reviewLoading, setReviewLoading] = useState(false)
+  const [reviewError, setReviewError] = useState('')
+
   const [tasks, setTasks] = useState([])
   const [tasksLoading, setTasksLoading] = useState(true)
   const [tasksError, setTasksError] = useState('')
@@ -48,6 +52,54 @@ function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
   const [quarterComparison, setQuarterComparison] = useState(null)
   const [quarterLoading, setQuarterLoading] = useState(true)
   const [quarterError, setQuarterError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/shop-profile', { headers: { 'x-app-password': password } })
+      .then(async (response) => {
+        const body = await response.json()
+        if (!response.ok) throw new Error(body.error || 'Failed to load shop profile.')
+        return body
+      })
+      .then((body) => {
+        if (!cancelled) setShopProfile(body)
+      })
+      .catch(() => {
+        // Non-fatal — the thumbnail just stays hidden.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [password])
+
+  // Runs the full rule-based shop audit and downloads it as a PDF —
+  // fetch()+Blob rather than a plain link/window.open so the password
+  // stays in the request header, never the URL (which would otherwise
+  // land in browser history and server request logs).
+  const handleShopReview = async () => {
+    setReviewLoading(true)
+    setReviewError('')
+    try {
+      const response = await fetch('/api/shop-review/pdf', { headers: { 'x-app-password': password } })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error || 'Failed to generate the shop review.')
+      }
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `shop-review-${new Date().toISOString().slice(0, 10)}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setReviewError(err.message)
+    } finally {
+      setReviewLoading(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -250,6 +302,18 @@ function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
 
   return (
     <section id="dashboard-page">
+      <div className="dashboard-shop-header">
+        {shopProfile?.iconUrl && (
+          <a href={shopProfile.url} target="_blank" rel="noreferrer">
+            <img className="dashboard-shop-thumb" src={shopProfile.iconUrl} alt={shopProfile.shopName} />
+          </a>
+        )}
+        <button type="button" className="revamp-button" onClick={handleShopReview} disabled={reviewLoading}>
+          {reviewLoading ? 'Reviewing…' : 'Shop Review'}
+        </button>
+      </div>
+      {reviewError && <p className="error">{reviewError}</p>}
+
       <h1>Welcome back</h1>
       <p className="subhead">Here's your shop at a glance.</p>
 

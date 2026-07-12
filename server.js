@@ -62,6 +62,11 @@ import { createWeeklyReportHandler, createTrafficBreakdownHandler } from './serv
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
+import {
+  createShopReviewHandler,
+  createShopReviewPdfHandler,
+  createShopProfileHandler,
+} from './server/shopReview.js'
 
 // Local convenience only — on Render, ANTHROPIC_API_KEY and APP_PASSWORD are
 // real environment variables set in the dashboard, so there's no .env file
@@ -158,6 +163,11 @@ app.use('/api/dashboard-tasks', createDashboardTasksHandler(env, passwordsMatch)
 app.use('/api/nightly-sync-log', createNightlySyncLogHandler(env, passwordsMatch))
 app.use('/api/weekly-report', createWeeklyReportHandler(env, passwordsMatch))
 app.use('/api/traffic-breakdown', createTrafficBreakdownHandler(env, passwordsMatch))
+app.use('/api/shop-profile', createShopProfileHandler(env, passwordsMatch))
+// Must be registered before '/api/shop-review' — app.use matches by
+// path prefix, same reasoning as the other prefix-collision routes.
+app.use('/api/shop-review/pdf', createShopReviewPdfHandler(env, passwordsMatch))
+app.use('/api/shop-review', createShopReviewHandler(env, passwordsMatch))
 app.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))
 app.use('/api/keyword-bank-scan', createKeywordBankScanHandler(env, passwordsMatch))
 // Must be registered before '/api/keyword-bank' — app.use matches by

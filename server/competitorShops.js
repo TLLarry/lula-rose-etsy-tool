@@ -143,6 +143,12 @@ async function fetchActiveListings(env, shopId) {
         tags: Array.isArray(r.tags) ? r.tags.map(decodeHtmlEntities) : [],
         taxonomyId: r.taxonomy_id ?? null,
         creationTimestamp: r.creation_timestamp ?? null,
+        // Both present on this same public endpoint's raw response
+        // (confirmed live) — added for server/shopReview.js's own-shop
+        // audit, which needs real description/materials data per
+        // listing; harmless additive fields for every existing caller.
+        description: decodeHtmlEntities(typeof r.description === 'string' ? r.description : ''),
+        materials: Array.isArray(r.materials) ? r.materials : [],
       })
     }
     if (data.results.length < PAGE_LIMIT) break
@@ -794,4 +800,5 @@ export {
   createShopListingsPickerHandler,
   buildCompetitorIdeas,
   createDashboardIdeasHandler,
+  fetchActiveListings,
 }

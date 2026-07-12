@@ -725,6 +725,24 @@ mark {
   max-width: none;
 }
 
+/* Shop thumbnail + Shop Review button, top-left of the Dashboard —
+   plain flex row, no color fill (the button is the same white
+   .revamp-button every other action button on the page uses). */
+.dashboard-shop-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.dashboard-shop-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
 /* Overrides the shared 160px header buffer above — the Dashboard's rows
    start right under the subtitle instead, using just the container's
    own 16px gap. */

@@ -59,6 +59,11 @@ import { createWeeklyReportHandler, createTrafficBreakdownHandler } from './serv
 import { createLowPerformersHandler } from './server/lowPerformers.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
+import {
+  createShopReviewHandler,
+  createShopReviewPdfHandler,
+  createShopProfileHandler,
+} from './server/shopReview.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -206,6 +211,14 @@ function etsyTitleWriterPlugin(env) {
         '/api/traffic-breakdown',
         createTrafficBreakdownHandler(env, passwordsMatch)
       )
+      server.middlewares.use('/api/shop-profile', createShopProfileHandler(env, passwordsMatch))
+      // Must be registered before '/api/shop-review' — connect
+      // middleware matches by path prefix, same reasoning as server.js.
+      server.middlewares.use(
+        '/api/shop-review/pdf',
+        createShopReviewPdfHandler(env, passwordsMatch)
+      )
+      server.middlewares.use('/api/shop-review', createShopReviewHandler(env, passwordsMatch))
     },
   }
 }
