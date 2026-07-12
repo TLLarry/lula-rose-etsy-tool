@@ -1337,7 +1337,7 @@ function ListingRevamp({ password, pendingListingUrl, onPendingListingConsumed }
           const totalCount = sectionInfo.activeListingCount
           const remainingCount = totalCount - doneCount
           return (
-            <div className="result">
+            <div className="result section-revamp-panel">
               <div className="result-section">
                 <h2>Section: {sectionInfo.title}</h2>
                 <p className="subhead">
