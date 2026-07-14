@@ -215,6 +215,12 @@
   background: var(--bg);
 }
 
+/* Market Research report panel only — same white-override as
+   .section-revamp-panel above, not .result's default cream fill. */
+.market-research-result {
+  background: var(--bg);
+}
+
 .result-section h2 {
   text-align: left;
   margin: 0 0 8px;

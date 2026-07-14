@@ -1,4 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+
+const MAX_MARKET_CSV_BYTES = 15 * 1024 * 1024
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
+}
+
+function formatMoney(cents) {
+  if (typeof cents !== 'number') return '—'
+  return `$${(cents / 100).toFixed(2)}`
+}
 
 function EtsyCoach({ password }) {
   const [flags, setFlags] = useState(null)
@@ -12,6 +28,13 @@ function EtsyCoach({ password }) {
   const [thresholdInput, setThresholdInput] = useState('')
   const [savingThreshold, setSavingThreshold] = useState(false)
   const [thresholdError, setThresholdError] = useState('')
+
+  const marketCsvInputRef = useRef(null)
+  const [marketCsvFile, setMarketCsvFile] = useState(null)
+  const [marketAnalyzing, setMarketAnalyzing] = useState(false)
+  const [marketError, setMarketError] = useState('')
+  const [marketWarnings, setMarketWarnings] = useState([])
+  const [marketReport, setMarketReport] = useState(null)
 
   const loadFlags = () => {
     setFlagsLoading(true)
@@ -71,6 +94,51 @@ function EtsyCoach({ password }) {
       setThresholdError(err.message)
     } finally {
       setSavingThreshold(false)
+    }
+  }
+
+  const handleMarketCsvFileSelected = (event) => {
+    const selected = event.target.files?.[0] || null
+    event.target.value = '' // allow re-selecting the same file after clearing
+    setMarketError('')
+    setMarketWarnings([])
+    setMarketReport(null)
+    if (!selected) return
+
+    if (!selected.name.toLowerCase().endsWith('.csv')) {
+      setMarketError('Please choose a .csv file.')
+      setMarketCsvFile(null)
+      return
+    }
+    if (selected.size > MAX_MARKET_CSV_BYTES) {
+      setMarketError(`That file is over ${MAX_MARKET_CSV_BYTES / (1024 * 1024)}MB — please use a smaller export.`)
+      setMarketCsvFile(null)
+      return
+    }
+    setMarketCsvFile(selected)
+  }
+
+  const handleAnalyzeMarketCsv = async () => {
+    if (!marketCsvFile) return
+    setMarketAnalyzing(true)
+    setMarketError('')
+    setMarketWarnings([])
+    setMarketReport(null)
+    try {
+      const content = await readFileAsText(marketCsvFile)
+      const response = await fetch('/api/market-research-csv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({ filename: marketCsvFile.name, content }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to analyze that file.')
+      setMarketWarnings(data.warnings || [])
+      setMarketReport(data.report)
+    } catch (err) {
+      setMarketError(err.message)
+    } finally {
+      setMarketAnalyzing(false)
     }
   }
 
@@ -215,6 +283,148 @@ function EtsyCoach({ password }) {
           </div>
         </div>
       )}
+
+      <div className="etsy-coach-section">
+        <h2>Market Research — CSV Analysis</h2>
+        <p className="subhead">
+          Upload an EverBee product search-results export for a category (e.g. "cupcake topper") to
+          see top sellers, the most-used tags, the most-viewed products, and which shops have real
+          sales volume — filtered to US-based shops where that's available in the file. Read-only:
+          this doesn't touch your own shop or save anything, just analyzes the file you upload.
+        </p>
+
+        <div className="field">
+          <label>CSV file</label>
+          <input
+            ref={marketCsvInputRef}
+            type="file"
+            accept=".csv"
+            onChange={handleMarketCsvFileSelected}
+            className="visually-hidden-input"
+          />
+          <div className="upload-row">
+            <button
+              type="button"
+              className="upload-button"
+              onClick={() => marketCsvInputRef.current?.click()}
+            >
+              Choose File
+            </button>
+            <span className="upload-filename">{marketCsvFile ? marketCsvFile.name : 'No file chosen'}</span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className="revamp-button"
+          onClick={handleAnalyzeMarketCsv}
+          disabled={!marketCsvFile || marketAnalyzing}
+        >
+          {marketAnalyzing ? 'Analyzing…' : 'Analyze'}
+        </button>
+        {marketAnalyzing && (
+          <p className="subhead">Processing — large files (thousands of rows) can take a few moments.</p>
+        )}
+
+        {marketError && <p className="error">{marketError}</p>}
+        {marketWarnings.map((warning) => (
+          <p className="subhead" key={warning}>
+            {warning}
+          </p>
+        ))}
+
+        {marketReport && (
+          <div className="result market-research-result">
+            <p className="subhead">
+              {marketReport.filteredByCountry
+                ? `${marketReport.usRowCount} of ${marketReport.totalRows} rows identified as US-based — the report below only covers those.`
+                : `${marketReport.totalRows} rows analyzed, not filtered by country (see note above).`}
+            </p>
+
+            <div className="competitor-gap-section">
+              <h3>Top Sellers</h3>
+              {!marketReport.fieldsDetected.salesDataAvailable || marketReport.topSellers.length === 0 ? (
+                <p className="subhead">No sales data found in this file to rank by.</p>
+              ) : (
+                <ul className="competitor-gap-list">
+                  {marketReport.topSellers.map((item, index) => (
+                    <li key={`${item.shopName}-${item.listingTitle}-${index}`}>
+                      {item.listingUrl ? (
+                        <a href={item.listingUrl} target="_blank" rel="noreferrer">
+                          {item.listingTitle || '(untitled)'}
+                        </a>
+                      ) : (
+                        item.listingTitle || '(untitled)'
+                      )}{' '}
+                      — {item.shopName} — {item.sales} sales
+                      {typeof item.views === 'number' ? `, ${item.views} views` : ''}
+                      {typeof item.priceCents === 'number' ? `, ${formatMoney(item.priceCents)}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="competitor-gap-section">
+              <h3>Top Tags &amp; Keywords</h3>
+              {!marketReport.fieldsDetected.tagsDataAvailable || marketReport.topTags.length === 0 ? (
+                <p className="subhead">No tags column found in this file.</p>
+              ) : (
+                <div className="competitor-tag-row">
+                  {marketReport.topTags.map((entry) => (
+                    <span className="competitor-tag-pill" key={entry.tag}>
+                      {entry.tag} ({entry.count}, {entry.percentOfListings}%)
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="competitor-gap-section">
+              <h3>Most-Viewed Products</h3>
+              {!marketReport.fieldsDetected.viewsDataAvailable || marketReport.mostViewed.length === 0 ? (
+                <p className="subhead">No views data found in this file.</p>
+              ) : (
+                <ul className="competitor-gap-list">
+                  {marketReport.mostViewed.map((item, index) => (
+                    <li key={`${item.shopName}-${item.listingTitle}-${index}`}>
+                      {item.listingUrl ? (
+                        <a href={item.listingUrl} target="_blank" rel="noreferrer">
+                          {item.listingTitle || '(untitled)'}
+                        </a>
+                      ) : (
+                        item.listingTitle || '(untitled)'
+                      )}{' '}
+                      — {item.shopName} — {item.views} views
+                      {typeof item.sales === 'number' ? `, ${item.sales} sales` : ''}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="competitor-gap-section">
+              <h3>Shops With High Sales Volume</h3>
+              <p className="subhead">
+                Ranked by total sales added up across every listing of theirs in this file — catches a
+                shop doing steady volume across many listings, not just one viral hit.
+              </p>
+              {!marketReport.fieldsDetected.salesDataAvailable || marketReport.highVolumeShops.length === 0 ? (
+                <p className="subhead">No sales data found in this file to rank by.</p>
+              ) : (
+                <ul className="competitor-gap-list">
+                  {marketReport.highVolumeShops.map((shop) => (
+                    <li key={shop.shopName}>
+                      {shop.shopName} — {shop.totalSales} total sales across {shop.listingCount} listing
+                      {shop.listingCount === 1 ? '' : 's'} ({formatMoney(shop.totalRevenueCents)})
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   )
 }

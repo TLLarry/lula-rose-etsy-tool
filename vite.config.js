@@ -57,6 +57,7 @@ import {
 } from './server/dashboardTasks.js'
 import { createWeeklyReportHandler, createTrafficBreakdownHandler } from './server/weeklyReport.js'
 import { createLowPerformersHandler } from './server/lowPerformers.js'
+import { createMarketResearchUploadHandler } from './server/marketResearch.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
 import {
@@ -195,6 +196,10 @@ function etsyTitleWriterPlugin(env) {
         createNightlySyncLogHandler(env, passwordsMatch)
       )
       server.middlewares.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))
+      server.middlewares.use(
+        '/api/market-research-csv',
+        createMarketResearchUploadHandler(env, passwordsMatch)
+      )
       server.middlewares.use(
         '/api/keyword-bank-scan',
         createKeywordBankScanHandler(env, passwordsMatch)
