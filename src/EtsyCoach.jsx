@@ -16,7 +16,7 @@ function formatMoney(cents) {
   return `$${(cents / 100).toFixed(2)}`
 }
 
-function EtsyCoach({ password }) {
+function EtsyCoach({ password, onCreateSimilarListing }) {
   const [flags, setFlags] = useState(null)
   const [flagsError, setFlagsError] = useState('')
   const [flagsLoading, setFlagsLoading] = useState(true)
@@ -35,6 +35,14 @@ function EtsyCoach({ password }) {
   const [marketError, setMarketError] = useState('')
   const [marketWarnings, setMarketWarnings] = useState([])
   const [marketReport, setMarketReport] = useState(null)
+
+  const [myListings, setMyListings] = useState([])
+  // Which of my own listings is picked for each missing tag, keyed by
+  // the tag text — { [tag]: myListingIdString }.
+  const [tagListingSelection, setTagListingSelection] = useState({})
+  const [applyingTag, setApplyingTag] = useState(null)
+  const [tagApplyErrors, setTagApplyErrors] = useState({})
+  const [tagApplySuccess, setTagApplySuccess] = useState({})
 
   const loadFlags = () => {
     setFlagsLoading(true)
@@ -73,6 +81,15 @@ function EtsyCoach({ password }) {
     // loadFlags explicitly instead of this re-running.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    fetch('/api/shop-listings', { headers: { 'x-app-password': password } })
+      .then((response) => response.json())
+      .then((body) => setMyListings(body.listings || []))
+      .catch(() => {
+        // Non-fatal — the missing-tags picker just stays empty.
+      })
+  }, [password])
 
   const handleSaveThreshold = async () => {
     const value = Number(thresholdInput)
@@ -139,6 +156,27 @@ function EtsyCoach({ password }) {
       setMarketError(err.message)
     } finally {
       setMarketAnalyzing(false)
+    }
+  }
+
+  const handleApplyMissingTag = async (tag) => {
+    const myListingId = tagListingSelection[tag]
+    if (!myListingId) return
+    setApplyingTag(tag)
+    setTagApplyErrors((prev) => ({ ...prev, [tag]: '' }))
+    try {
+      const response = await fetch('/api/market-research-add-tag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({ myListingId: Number(myListingId), tag }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to add that tag.')
+      setTagApplySuccess((prev) => ({ ...prev, [tag]: data.listingTitle }))
+    } catch (err) {
+      setTagApplyErrors((prev) => ({ ...prev, [tag]: err.message }))
+    } finally {
+      setApplyingTag(null)
     }
   }
 
@@ -348,17 +386,30 @@ function EtsyCoach({ password }) {
               ) : (
                 <ul className="competitor-gap-list">
                   {marketReport.topSellers.map((item, index) => (
-                    <li key={`${item.shopName}-${item.listingTitle}-${index}`}>
-                      {item.listingUrl ? (
-                        <a href={item.listingUrl} target="_blank" rel="noreferrer">
-                          {item.listingTitle || '(untitled)'}
-                        </a>
-                      ) : (
-                        item.listingTitle || '(untitled)'
-                      )}{' '}
-                      — {item.shopName} — {item.sales} sales
-                      {typeof item.views === 'number' ? `, ${item.views} views` : ''}
-                      {typeof item.priceCents === 'number' ? `, ${formatMoney(item.priceCents)}` : ''}
+                    <li className="dashboard-task-row" key={`${item.shopName}-${item.listingTitle}-${index}`}>
+                      <p className="dashboard-task-text">
+                        {item.listingUrl ? (
+                          <a href={item.listingUrl} target="_blank" rel="noreferrer">
+                            {item.listingTitle || '(untitled)'}
+                          </a>
+                        ) : (
+                          item.listingTitle || '(untitled)'
+                        )}{' '}
+                        — {item.shopName} — {item.sales} sales
+                        {typeof item.views === 'number' ? `, ${item.views} views` : ''}
+                        {typeof item.priceCents === 'number' ? `, ${formatMoney(item.priceCents)}` : ''}
+                      </p>
+                      {item.listingUrl && (
+                        <div className="dashboard-task-actions">
+                          <button
+                            type="button"
+                            className="revamp-button"
+                            onClick={() => onCreateSimilarListing(item.listingUrl)}
+                          >
+                            Create Similar Listing
+                          </button>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -381,22 +432,91 @@ function EtsyCoach({ password }) {
             </div>
 
             <div className="competitor-gap-section">
+              <h3>Tags You're Missing</h3>
+              <p className="subhead">
+                The top tags above that don't appear anywhere in your own shop yet, ranked by how common
+                they are in this category. Pick one of your listings and add it directly — no manual
+                editing on Etsy needed.
+              </p>
+              {!marketReport.fieldsDetected.tagsDataAvailable || marketReport.missingTags.length === 0 ? (
+                <p className="subhead">
+                  {marketReport.fieldsDetected.tagsDataAvailable
+                    ? "Every top tag in this category is already used somewhere in your shop — nothing missing."
+                    : 'No tags column found in this file.'}
+                </p>
+              ) : (
+                <ul className="competitor-gap-list">
+                  {marketReport.missingTags.map((entry) => (
+                    <li className="dashboard-task-row" key={entry.tag}>
+                      <p className="dashboard-task-text">
+                        "{entry.tag}" — used by {entry.percentOfListings}% of listings in this category
+                      </p>
+                      <div className="dashboard-task-actions">
+                        {tagApplySuccess[entry.tag] ? (
+                          <span className="subhead">Added to {tagApplySuccess[entry.tag]}</span>
+                        ) : (
+                          <>
+                            <select
+                              value={tagListingSelection[entry.tag] || ''}
+                              onChange={(event) =>
+                                setTagListingSelection((prev) => ({ ...prev, [entry.tag]: event.target.value }))
+                              }
+                            >
+                              <option value="">Your listing…</option>
+                              {myListings.map((listing) => (
+                                <option key={listing.id} value={listing.id}>
+                                  {listing.title}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              className="revamp-button"
+                              onClick={() => handleApplyMissingTag(entry.tag)}
+                              disabled={!tagListingSelection[entry.tag] || applyingTag === entry.tag}
+                            >
+                              {applyingTag === entry.tag ? 'Adding…' : 'Add Tag'}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                      {tagApplyErrors[entry.tag] && <p className="error">{tagApplyErrors[entry.tag]}</p>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="competitor-gap-section">
               <h3>Most-Viewed Products</h3>
               {!marketReport.fieldsDetected.viewsDataAvailable || marketReport.mostViewed.length === 0 ? (
                 <p className="subhead">No views data found in this file.</p>
               ) : (
                 <ul className="competitor-gap-list">
                   {marketReport.mostViewed.map((item, index) => (
-                    <li key={`${item.shopName}-${item.listingTitle}-${index}`}>
-                      {item.listingUrl ? (
-                        <a href={item.listingUrl} target="_blank" rel="noreferrer">
-                          {item.listingTitle || '(untitled)'}
-                        </a>
-                      ) : (
-                        item.listingTitle || '(untitled)'
-                      )}{' '}
-                      — {item.shopName} — {item.views} views
-                      {typeof item.sales === 'number' ? `, ${item.sales} sales` : ''}
+                    <li className="dashboard-task-row" key={`${item.shopName}-${item.listingTitle}-${index}`}>
+                      <p className="dashboard-task-text">
+                        {item.listingUrl ? (
+                          <a href={item.listingUrl} target="_blank" rel="noreferrer">
+                            {item.listingTitle || '(untitled)'}
+                          </a>
+                        ) : (
+                          item.listingTitle || '(untitled)'
+                        )}{' '}
+                        — {item.shopName} — {item.views} views
+                        {typeof item.sales === 'number' ? `, ${item.sales} sales` : ''}
+                      </p>
+                      {item.listingUrl && (
+                        <div className="dashboard-task-actions">
+                          <button
+                            type="button"
+                            className="revamp-button"
+                            onClick={() => onCreateSimilarListing(item.listingUrl)}
+                          >
+                            Create Similar Listing
+                          </button>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>

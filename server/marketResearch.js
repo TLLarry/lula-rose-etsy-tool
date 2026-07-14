@@ -22,7 +22,9 @@
 // discarded once the response is sent.
 import Papa from 'papaparse'
 import { readJsonBody, RequestError } from './listingApi.js'
-import { checkAppPassword } from './db.js'
+import { checkAppPassword, getShopListings, getShopListingById } from './db.js'
+import { fetchEtsyListing } from './etsyListing.js'
+import { updateEtsyListing } from './etsyListingUpdate.js'
 
 // Larger than the 5MB cap on the existing per-listing CSV upload
 // (server/csvUpload.js) — EverBee itself caps a single export at 3,000
@@ -34,6 +36,8 @@ const TOP_SELLERS_COUNT = 15
 const MOST_VIEWED_COUNT = 15
 const TOP_TAGS_COUNT = 30
 const HIGH_VOLUME_SHOPS_COUNT = 15
+const MISSING_TAGS_COUNT = 15
+const MAX_ETSY_TAGS = 13
 
 // Candidate header substrings per logical field, most-likely-real-
 // wording first. First column whose header contains any candidate
@@ -81,9 +85,27 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : null
 }
 
-// Tags typically arrive as one delimited string per row ("balloon,
-// birthday, party decor" or "balloon | birthday | party decor") —
-// splits on comma, pipe, or semicolon, whichever the real file uses.
+// Confirmed against a real EverBee export: tags are NOT one delimited
+// column — they're 13 separate columns, "Tag 1" through "Tag 13"
+// (matching Etsy's own 13-tag-slot structure), each holding a single
+// tag or blank. Finds every header matching that numbered pattern,
+// case-insensitively, regardless of exact spacing ("Tag 1", "Tag1",
+// "tag 1").
+function findTagColumns(headers) {
+  return headers
+    .map((header) => {
+      const match = header.match(/^tag\s*(\d+)$/i)
+      return match ? { header, index: Number(match[1]) } : null
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.index - b.index)
+    .map((entry) => entry.header)
+}
+
+// Falls back to a single delimited "Tags" column ("balloon, birthday,
+// party decor") for any other export that uses that shape instead —
+// doesn't hurt to keep both paths, only one will ever match a given
+// file's real headers.
 function splitTags(raw) {
   if (!raw) return []
   return String(raw)
@@ -110,6 +132,10 @@ function parseMarketResearchCsv(content, filename) {
   for (const [field, candidates] of Object.entries(FIELD_CANDIDATES)) {
     columnMap[field] = findColumn(headers, candidates)
   }
+  // Numbered Tag 1..Tag 13 columns take priority — confirmed the real
+  // format for this export; the single delimited "tags" candidate above
+  // only matters as a fallback when no numbered columns exist.
+  const tagColumns = findTagColumns(headers)
 
   if (!columnMap.shopName && !columnMap.listingTitle) {
     throw new RequestError(
@@ -156,7 +182,12 @@ function parseMarketResearchCsv(content, filename) {
         revenueCents: columnMap.revenue ? Math.round((toNumber(row[columnMap.revenue]) ?? 0) * 100) : null,
         priceCents: columnMap.price ? Math.round((toNumber(row[columnMap.price]) ?? 0) * 100) : null,
         reviews: columnMap.reviews ? toNumber(row[columnMap.reviews]) : null,
-        tags: columnMap.tags ? splitTags(row[columnMap.tags]) : [],
+        tags:
+          tagColumns.length > 0
+            ? tagColumns.map((col) => String(row[col] || '').trim()).filter(Boolean)
+            : columnMap.tags
+              ? splitTags(row[columnMap.tags])
+              : [],
         location: rawLocation || null,
         isUs,
       }
@@ -167,10 +198,10 @@ function parseMarketResearchCsv(content, filename) {
     throw new RequestError(400, 'Found columns but no usable rows — every row was missing both a shop name and a listing title.')
   }
 
-  return { headers, columnMap, warnings, rows }
+  return { headers, columnMap: { ...columnMap, tagColumns }, warnings, rows }
 }
 
-function buildMarketResearchReport(rows, columnMap) {
+function buildMarketResearchReport(rows, columnMap, myTagKeys = new Set()) {
   // "Unfiltered" mode when there's genuinely no location/currency signal
   // at all (isUs is null for every row) — filtering to US-only would
   // just silently produce an empty report in that case, which reads as
@@ -242,12 +273,23 @@ function buildMarketResearchReport(rows, columnMap) {
     .sort((a, b) => b.totalSales - a.totalSales)
     .slice(0, HIGH_VOLUME_SHOPS_COUNT)
 
+  // The actual task: which of this category's real, working tags are
+  // you not using ANYWHERE in your own shop yet — ranked by how common
+  // they are across the category, so the top of this list is the
+  // highest-value gap, not just an alphabetical dump. This is what
+  // turns "here are the top tags" from a fact you'd have to act on
+  // yourself into something with a real, one-click fix right below it.
+  const missingTags = topTags
+    .filter((entry) => !myTagKeys.has(entry.tag.toLowerCase()))
+    .slice(0, MISSING_TAGS_COUNT)
+
   return {
     totalRows: rows.length,
     usRowCount: usRows.length,
     filteredByCountry: hasAnyLocationSignal,
     topSellers,
     topTags,
+    missingTags,
     mostViewed,
     highVolumeShops,
     fieldsDetected: {
@@ -278,7 +320,12 @@ function createMarketResearchUploadHandler(env, passwordsMatch) {
       }
 
       const { headers, columnMap, warnings, rows } = parseMarketResearchCsv(content, filename)
-      const report = buildMarketResearchReport(rows, columnMap)
+      const myTagKeys = new Set(
+        getShopListings().flatMap((listing) =>
+          listing.tags_json ? JSON.parse(listing.tags_json).map((tag) => tag.trim().toLowerCase()) : []
+        )
+      )
+      const report = buildMarketResearchReport(rows, columnMap, myTagKeys)
 
       res.end(JSON.stringify({ ok: true, headersFound: headers, columnMap, warnings, report }))
     } catch (err) {
@@ -288,4 +335,64 @@ function createMarketResearchUploadHandler(env, passwordsMatch) {
   }
 }
 
-export { parseMarketResearchCsv, buildMarketResearchReport, createMarketResearchUploadHandler }
+// POST /api/market-research-add-tag, body { myListingId, tag } —
+// myListingId is the INTERNAL shop_listings.id (same id the
+// /api/shop-listings picker already returns), not the raw Etsy id.
+// Fetches the listing's CURRENT live tags fresh (not whatever's cached
+// from the last nightly sync) so this never clobbers a tag added
+// through some other path since the last sync, appends the new tag if
+// there's room and it isn't already present, and writes it straight to
+// Etsy — the actual one-click implementation of a missing-tags finding,
+// not just a fact you'd have to go apply yourself.
+function createMarketResearchAddTagHandler(env, passwordsMatch) {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      const { myListingId, tag } = await readJsonBody(req)
+      const listingId = Number(myListingId)
+      if (!Number.isInteger(listingId) || listingId <= 0) {
+        throw new RequestError(400, 'A valid myListingId is required.')
+      }
+      if (typeof tag !== 'string' || !tag.trim()) {
+        throw new RequestError(400, 'A tag is required.')
+      }
+
+      const shopListing = getShopListingById(listingId)
+      if (!shopListing) {
+        throw new RequestError(404, 'That listing is no longer tracked.')
+      }
+
+      const fresh = await fetchEtsyListing(env, shopListing.etsy_listing_id)
+      const currentTags = fresh.tags || []
+      const trimmedTag = tag.trim()
+      if (currentTags.some((existing) => existing.trim().toLowerCase() === trimmedTag.toLowerCase())) {
+        throw new RequestError(400, `"${shopListing.title}" already has this tag.`)
+      }
+      if (currentTags.length >= MAX_ETSY_TAGS) {
+        throw new RequestError(400, `"${shopListing.title}" already has all ${MAX_ETSY_TAGS} tag slots filled — remove one first.`)
+      }
+
+      const newTags = [...currentTags, trimmedTag]
+      await updateEtsyListing(env, Number(shopListing.etsy_listing_id), { tags: newTags })
+
+      res.end(JSON.stringify({ ok: true, listingTitle: shopListing.title, newTags }))
+    } catch (err) {
+      res.statusCode = err.status || 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
+export {
+  parseMarketResearchCsv,
+  buildMarketResearchReport,
+  createMarketResearchUploadHandler,
+  createMarketResearchAddTagHandler,
+}
