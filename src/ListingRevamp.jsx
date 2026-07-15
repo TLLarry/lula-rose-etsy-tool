@@ -1418,7 +1418,7 @@ function ListingRevamp({
           const totalCount = sectionInfo.activeListingCount
           const remainingCount = totalCount - doneCount
           return (
-            <div className="result section-revamp-panel">
+            <div className="result result-white">
               <div className="result-section">
                 <h2>Section: {sectionInfo.title}</h2>
                 <p className="subhead">

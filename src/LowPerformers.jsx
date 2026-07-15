@@ -57,7 +57,7 @@ function LowPerformers({ password, onRevamp }) {
                 <div className="low-performer-thumb-slot">
                   {listing.thumbnailUrl && (
                     <img
-                      className="low-performer-thumb"
+                      className="top-seller-thumb"
                       src={listing.thumbnailUrl}
                       alt={listing.title}
                     />

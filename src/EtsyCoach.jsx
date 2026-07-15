@@ -406,7 +406,7 @@ function EtsyCoach({ password, onCreateSimilarListing }) {
         ))}
 
         {marketReport && (
-          <div className="result market-research-result">
+          <div className="result result-white">
             <p className="subhead">
               {marketReport.filteredByCountry
                 ? `${marketReport.usRowCount} of ${marketReport.totalRows} rows identified as US-based — the report below only covers those.`

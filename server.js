@@ -48,7 +48,6 @@ import {
   createEtsyCoachFlagsHandler,
   createQuarterComparisonHandler,
   createTopSellersHandler,
-  createBottomPerformersHandler,
 } from './server/etsyCoach.js'
 import { createRunNightlySyncHandler, createNightlySyncLogHandler } from './server/nightlySync.js'
 import { createBackfillShopHistoryHandler } from './server/etsyShopStats.js'
@@ -154,7 +153,6 @@ app.use('/api/etsy-oauth/status', createEtsyOAuthStatusHandler(env, passwordsMat
 app.use('/api/etsy-coach/flags', createEtsyCoachFlagsHandler(env, passwordsMatch))
 app.use('/api/etsy-coach/quarter-comparison', createQuarterComparisonHandler(env, passwordsMatch))
 app.use('/api/top-sellers', createTopSellersHandler(env, passwordsMatch))
-app.use('/api/bottom-performers', createBottomPerformersHandler(env, passwordsMatch))
 app.use('/api/app-settings', createAppSettingsHandler(env, passwordsMatch))
 app.use('/api/run-nightly-sync', createRunNightlySyncHandler(env))
 app.use('/api/backfill-shop-history', createBackfillShopHistoryHandler(env, passwordsMatch))

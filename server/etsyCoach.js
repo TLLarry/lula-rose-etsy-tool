@@ -426,85 +426,6 @@ function createTopSellersHandler(env, passwordsMatch) {
   }
 }
 
-// Dashboard's "Bottom 3 Performing Listings" box — bottom 3 by units
-// sold in the SAME rolling 30-day window Top Sellers uses, for a
-// natural "top and bottom of the same metric" pairing. Two exclusions,
-// both reusing already-established rules rather than inventing new
-// ones: listings younger than NEW_LISTING_WINDOW_DAYS are excluded
-// (they haven't had a fair chance yet — the same grace period the
-// new-listing review already gives), and off-season seasonal listings
-// are excluded (a Christmas item quiet in July isn't a real problem —
-// the same keyword-detection exclusion Low Performers/Weekly Report
-// already use). Each listing gets a short, plain-English reason for
-// the dashboard's click-to-see-why interaction.
-function computeWorstPerformers(referenceDate = new Date()) {
-  const rows = getListingStatsRolling30Days()
-  const listingsById = new Map(getShopListings().map((listing) => [listing.id, listing]))
-  const currentQuarterLabel = quarterLabel(getQuarterForDate(referenceDate).quarter)
-
-  const eligible = rows.filter((row) => {
-    const listing = listingsById.get(row.listingId)
-    if (
-      listing?.etsy_created_at &&
-      daysSince(listing.etsy_created_at, referenceDate) < NEW_LISTING_WINDOW_DAYS
-    ) {
-      return false
-    }
-    const tags = listing?.tags_json ? JSON.parse(listing.tags_json) : []
-    const quarters = getMatchingQuartersForListing(listing?.title || '', tags)
-    return quarters.length === 0 || quarters.includes(currentQuarterLabel)
-  })
-
-  // Not just "bottom 3 of whoever's eligible" — confirmed with fixture
-  // data that with few genuinely-weak listings, a plain bottom-N can
-  // still pad the list with a clearly-thriving listing (150 units sold)
-  // just because nothing else was left to fill the slot. Same fix as
-  // Weekly Report's underperformers: only listings that classify as
-  // weak against their eligible peers (bottom quartile) qualify at all.
-  const peerUnitsSold = eligible.map((row) => row.unitsSold ?? 0)
-  return eligible
-    .filter((row) => classifyAgainstPeers(row.unitsSold ?? 0, peerUnitsSold).bucket === 'weak')
-    .sort(
-      (a, b) => (a.unitsSold ?? 0) - (b.unitsSold ?? 0) || (a.revenueCents ?? 0) - (b.revenueCents ?? 0)
-    )
-    .slice(0, 3)
-    .map((row) => {
-      const unitsSold = row.unitsSold ?? 0
-      const reason =
-        unitsSold === 0
-          ? 'No sales in the last 30 days. Try revamping the title and tags on the Listing Revamp page, or check the Low Performers page for a deeper look.'
-          : `Only ${unitsSold} sale${unitsSold === 1 ? '' : 's'} in the last 30 days — worth a closer look at pricing, photos, or tags.`
-      return {
-        listingId: row.listingId,
-        title: row.title,
-        thumbnailUrl: row.thumbnailUrl,
-        unitsSold30d: unitsSold,
-        reason,
-      }
-    })
-}
-
-// GET /api/bottom-performers. Same x-app-password auth as every other
-// endpoint.
-function createBottomPerformersHandler(env, passwordsMatch) {
-  return (req, res) => {
-    if (req.method !== 'GET') {
-      res.statusCode = 405
-      res.end('Method Not Allowed')
-      return
-    }
-    res.setHeader('Content-Type', 'application/json')
-    if (!checkAppPassword(req, res, env, passwordsMatch)) return
-
-    try {
-      res.end(JSON.stringify({ ok: true, listings: computeWorstPerformers() }))
-    } catch (err) {
-      res.statusCode = 500
-      res.end(JSON.stringify({ error: err.message }))
-    }
-  }
-}
-
 export {
   computeBestSellers,
   computeTrendPushRecommendations,
@@ -514,6 +435,4 @@ export {
   createEtsyCoachFlagsHandler,
   createQuarterComparisonHandler,
   createTopSellersHandler,
-  computeWorstPerformers,
-  createBottomPerformersHandler,
 }
