@@ -185,11 +185,23 @@ function parseMarketResearchCsv(content, filename) {
     }
   }
 
+  // Confirmed against a real file: the broad "title" candidate can
+  // land on a rank/position column instead of the actual product
+  // title (e.g. a search-result "#" column), which then rendered as a
+  // bare number where a title should be. A real Etsy listing title is
+  // never just digits, so any purely-numeric "title" value is treated
+  // as not actually a title — shown as untitled rather than a
+  // meaningless number — and flagged once below.
+  let numericTitleColumnDetected = false
+
   const rows = parsed.data
     .map((row) => {
       const shopName = columnMap.shopName ? String(row[columnMap.shopName] || '').trim() : ''
-      const listingTitle = columnMap.listingTitle ? String(row[columnMap.listingTitle] || '').trim() : ''
-      if (!shopName && !listingTitle) return null
+      const rawTitle = columnMap.listingTitle ? String(row[columnMap.listingTitle] || '').trim() : ''
+      if (!shopName && !rawTitle) return null
+
+      const listingTitle = /^\d+$/.test(rawTitle) ? '' : rawTitle
+      if (rawTitle && !listingTitle) numericTitleColumnDetected = true
 
       const rawLocation = columnMap.location ? String(row[columnMap.location] || '').trim() : ''
       const rawCurrency = columnMap.currency ? String(row[columnMap.currency] || '').trim() : ''
@@ -224,6 +236,12 @@ function parseMarketResearchCsv(content, filename) {
 
   if (rows.length === 0) {
     throw new RequestError(400, 'Found columns but no usable rows — every row was missing both a shop name and a listing title.')
+  }
+
+  if (numericTitleColumnDetected) {
+    warnings.push(
+      `The column detected as "${columnMap.listingTitle}" contains plain numbers for some rows (e.g. a search-result rank), not real listing titles — those rows show as untitled instead of displaying that number. If this file has a real product-title column under a different header, let us know its name.`
+    )
   }
 
   return { headers, columnMap: { ...columnMap, tagColumns }, warnings, rows }
@@ -380,6 +398,53 @@ async function enrichHighVolumeShopsWithEtsyData(env, rankedShops) {
   return enriched
 }
 
+// Etsy listing URLs are always /listing/{numericId}/... — the CSV
+// gives us the URL, not a separate listing-id column, so this is how
+// each row's real listing id is recovered for a follow-up image call.
+const LISTING_ID_FROM_URL = /\/listing\/(\d+)/
+
+function extractListingIdFromUrl(url) {
+  if (!url) return null
+  const match = url.match(LISTING_ID_FROM_URL)
+  return match ? match[1] : null
+}
+
+// GET /listings/{id}?includes=Images — confirmed live that this
+// single-listing endpoint returns real photo URLs (unlike the shop's
+// active-listings list endpoint, which never includes images even
+// when requested). Public, API-key only, works for any shop's
+// listing, not just the seller's own.
+async function fetchListingThumbnail(env, listingId) {
+  try {
+    const response = await fetchEtsyApi(`${ETSY_API_BASE}/listings/${listingId}?includes=Images`, {
+      headers: apiKeyHeader(env),
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    const firstImage = data.images?.[0]
+    return firstImage?.url_75x75 || firstImage?.url_170x135 || null
+  } catch {
+    return null
+  }
+}
+
+// One thumbnail lookup per Most-Viewed row — small, fixed-size list
+// (MOST_VIEWED_COUNT), so a plain sequential loop with pacing is fine,
+// same convention as the high-volume-shop enrichment above. A row
+// with no listing URL (so no recoverable id) or a failed lookup just
+// gets thumbnailUrl: null — the frontend shows a neutral placeholder
+// for that case rather than leaving the row blank.
+async function enrichMostViewedWithThumbnails(env, mostViewed) {
+  const enriched = []
+  for (let i = 0; i < mostViewed.length; i++) {
+    if (i > 0) await sleep(120)
+    const listingId = extractListingIdFromUrl(mostViewed[i].listingUrl)
+    const thumbnailUrl = listingId ? await fetchListingThumbnail(env, listingId) : null
+    enriched.push({ ...mostViewed[i], thumbnailUrl })
+  }
+  return enriched
+}
+
 // Does a specific listing look like a cake topper / topper-style
 // product? Matched against both the title and its tags — a listing
 // titled generically but tagged "cake topper" should still count.
@@ -421,6 +486,7 @@ function createMarketResearchUploadHandler(env, passwordsMatch) {
       )
       const { highVolumeShopsPool, ...report } = buildMarketResearchReport(rows, columnMap, myTagKeys)
       const highVolumeShops = await enrichHighVolumeShopsWithEtsyData(env, highVolumeShopsPool)
+      const mostViewed = await enrichMostViewedWithThumbnails(env, report.mostViewed)
 
       res.end(
         JSON.stringify({
@@ -428,7 +494,7 @@ function createMarketResearchUploadHandler(env, passwordsMatch) {
           headersFound: headers,
           columnMap,
           warnings,
-          report: { ...report, highVolumeShops },
+          report: { ...report, highVolumeShops, mostViewed },
         })
       )
     } catch (err) {

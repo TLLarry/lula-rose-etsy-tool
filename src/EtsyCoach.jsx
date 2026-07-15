@@ -529,6 +529,11 @@ function EtsyCoach({ password, onCreateSimilarListing }) {
                 <ul className="competitor-gap-list">
                   {marketReport.mostViewed.map((item, index) => (
                     <li className="dashboard-task-row" key={`${item.shopName}-${item.listingTitle}-${index}`}>
+                      {item.thumbnailUrl ? (
+                        <img className="top-seller-thumb" src={item.thumbnailUrl} alt="" />
+                      ) : (
+                        <span className="top-seller-thumb market-viewed-thumb-placeholder" aria-hidden="true" />
+                      )}
                       <p className="dashboard-task-text">
                         {item.listingUrl ? (
                           <a href={item.listingUrl} target="_blank" rel="noreferrer">
@@ -537,8 +542,9 @@ function EtsyCoach({ password, onCreateSimilarListing }) {
                         ) : (
                           item.listingTitle || '(untitled)'
                         )}{' '}
-                        — {item.shopName} — {item.views} views
-                        {typeof item.sales === 'number' ? `, ${item.sales} sales` : ''}
+                        — {item.shopName} — {item.views} listing views
+                        {typeof item.sales === 'number' ? `, ${item.sales} listing sales` : ''} (this one
+                        listing, not the whole shop)
                       </p>
                       {item.listingUrl && (
                         <div className="dashboard-task-actions">

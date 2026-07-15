@@ -991,6 +991,14 @@ mark {
   flex-shrink: 0;
 }
 
+/* Most-Viewed Products — neutral placeholder when Etsy has no image
+   for that listing. Same size/shape as a real .top-seller-thumb, just
+   a plain bordered box, no invented design. */
+.market-viewed-thumb-placeholder {
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
 .top-seller-info {
   min-width: 0;
   display: flex;
@@ -1365,13 +1373,12 @@ mark {
   gap: 10px;
 }
 
-/* Shops With High Sales Volume rows only — latte background per direct
-   instruction (same --latte/--latte-border token .calendar-prep-card
-   already uses elsewhere, no new color introduced). Buttons inside
-   stay uncolored, matching the rest of the page. */
+/* Shops With High Sales Volume rows — plain white, matching every
+   other card on this page (reverted from latte per direct
+   instruction). */
 .market-shop-row {
-  border: 1px solid var(--latte-border);
-  background: var(--latte);
+  border: 1px solid var(--border);
+  background: var(--bg);
   border-radius: 10px;
   padding: 12px 14px;
   display: flex;
