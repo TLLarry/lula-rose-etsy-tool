@@ -483,7 +483,11 @@ function EtsyCoach({ password, onCreateSimilarListing }) {
                   {marketReport.missingTags.map((entry) => (
                     <li className="dashboard-task-row" key={entry.tag}>
                       <p className="dashboard-task-text">
-                        "{entry.tag}" — used by {entry.percentOfListings}% of listings in this category
+                        "{entry.tag}" — used by {entry.count.toLocaleString()} of{' '}
+                        {marketReport.filteredByCountry
+                          ? `${marketReport.usRowCount.toLocaleString()} US listings`
+                          : `${marketReport.totalRows.toLocaleString()} listings (not filtered by country — see note above)`}{' '}
+                        in this category
                       </p>
                       <div className="dashboard-task-actions">
                         {tagApplySuccess[entry.tag] ? (
@@ -491,6 +495,7 @@ function EtsyCoach({ password, onCreateSimilarListing }) {
                         ) : (
                           <>
                             <select
+                              className="market-tag-listing-select"
                               value={tagListingSelection[entry.tag] || ''}
                               onChange={(event) =>
                                 setTagListingSelection((prev) => ({ ...prev, [entry.tag]: event.target.value }))

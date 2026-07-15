@@ -142,6 +142,30 @@ function splitTags(raw) {
     .filter(Boolean)
 }
 
+// Confirmed root cause of a blank "--" tag showing up at over 100% of
+// listings: some exports fill an EMPTY tag slot with a placeholder
+// like "--" instead of leaving it truly blank, and a listing can have
+// several empty slots — each one was being counted as its own
+// separate tag occurrence for the same listing, so a placeholder's
+// count could exceed the number of listings entirely. This strips
+// dash-only placeholders and also dedupes within a single listing's
+// own tag list, so no tag can ever be counted more than once for the
+// same listing.
+const BLANK_TAG_PLACEHOLDER = /^-+$/
+function cleanRowTags(rawTags) {
+  const seen = new Set()
+  const result = []
+  for (const raw of rawTags) {
+    const tag = String(raw || '').trim()
+    if (!tag || BLANK_TAG_PLACEHOLDER.test(tag)) continue
+    const key = tag.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(tag)
+  }
+  return result
+}
+
 function parseMarketResearchCsv(content, filename) {
   if (Buffer.byteLength(content, 'utf8') > MAX_CSV_BYTES) {
     throw new RequestError(400, `That file is over ${MAX_CSV_BYTES / (1024 * 1024)}MB — please use a smaller export.`)
@@ -222,12 +246,13 @@ function parseMarketResearchCsv(content, filename) {
         revenueCents: columnMap.revenue ? Math.round((toNumber(row[columnMap.revenue]) ?? 0) * 100) : null,
         priceCents: columnMap.price ? Math.round((toNumber(row[columnMap.price]) ?? 0) * 100) : null,
         reviews: columnMap.reviews ? toNumber(row[columnMap.reviews]) : null,
-        tags:
+        tags: cleanRowTags(
           tagColumns.length > 0
-            ? tagColumns.map((col) => String(row[col] || '').trim()).filter(Boolean)
+            ? tagColumns.map((col) => row[col])
             : columnMap.tags
               ? splitTags(row[columnMap.tags])
-              : [],
+              : []
+        ),
         location: rawLocation || null,
         isUs,
       }

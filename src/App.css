@@ -958,6 +958,19 @@ mark {
   flex-shrink: 0;
 }
 
+/* Tags You're Missing — a plain <select> sizes itself to its widest
+   OPTION text (this shop's longest listing titles), which was pushing
+   it past the card's border since nothing capped its width. Fixed
+   width with ellipsis truncation on the closed control, no other
+   style change. */
+.market-tag-listing-select {
+  max-width: 220px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dashboard-performer-reason {
   margin: 6px 0 0;
   padding: 0 12px;
