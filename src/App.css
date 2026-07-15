@@ -1357,6 +1357,73 @@ mark {
   color: var(--text-h);
 }
 
+/* Overrides .competitor-gap-list's bullet/indent — these rows are
+   latte cards, not a plain bulleted list. */
+.market-shop-list {
+  list-style: none;
+  padding-left: 0;
+  gap: 10px;
+}
+
+/* Shops With High Sales Volume rows only — latte background per direct
+   instruction (same --latte/--latte-border token .calendar-prep-card
+   already uses elsewhere, no new color introduced). Buttons inside
+   stay uncolored, matching the rest of the page. */
+.market-shop-row {
+  border: 1px solid var(--latte-border);
+  background: var(--latte);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+}
+
+.market-shop-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.market-shop-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* Neutral placeholder when Etsy has no shop icon — same border as a
+   real thumbnail, plain background fill, no invented design. */
+.market-shop-thumb-placeholder {
+  background: var(--bg);
+}
+
+/* Plain eye-icon button, no color fill — matches every other button
+   on this page. */
+.market-shop-eye-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  padding: 2px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.market-shop-analysis-panel {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
 .competitor-link-row {
   display: flex;
   align-items: center;

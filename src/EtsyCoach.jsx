@@ -44,6 +44,15 @@ function EtsyCoach({ password, onCreateSimilarListing }) {
   const [tagApplyErrors, setTagApplyErrors] = useState({})
   const [tagApplySuccess, setTagApplySuccess] = useState({})
 
+  // Eye-icon "topper analysis" panel on a Shops With High Sales Volume
+  // row — which shop's panel is open (by shopId) plus that panel's own
+  // loading/error/data, keyed by shopId so switching between rows
+  // doesn't need to re-fetch if you've already opened one before.
+  const [openShopAnalysisId, setOpenShopAnalysisId] = useState(null)
+  const [shopAnalysisLoading, setShopAnalysisLoading] = useState(false)
+  const [shopAnalysisError, setShopAnalysisError] = useState('')
+  const [shopAnalysisByShopId, setShopAnalysisByShopId] = useState({})
+
   const loadFlags = () => {
     setFlagsLoading(true)
     setFlagsError('')
@@ -177,6 +186,31 @@ function EtsyCoach({ password, onCreateSimilarListing }) {
       setTagApplyErrors((prev) => ({ ...prev, [tag]: err.message }))
     } finally {
       setApplyingTag(null)
+    }
+  }
+
+  const handleToggleShopAnalysis = async (shop) => {
+    if (openShopAnalysisId === shop.shopId) {
+      setOpenShopAnalysisId(null)
+      return
+    }
+    setOpenShopAnalysisId(shop.shopId)
+    if (shopAnalysisByShopId[shop.shopId]) return // already fetched, just reopening
+
+    setShopAnalysisLoading(true)
+    setShopAnalysisError('')
+    try {
+      const response = await fetch(
+        `/api/market-research-shop-analysis?shopId=${encodeURIComponent(shop.shopId)}`,
+        { headers: { 'x-app-password': password } }
+      )
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to analyze this shop.')
+      setShopAnalysisByShopId((prev) => ({ ...prev, [shop.shopId]: data }))
+    } catch (err) {
+      setShopAnalysisError(err.message)
+    } finally {
+      setShopAnalysisLoading(false)
     }
   }
 
@@ -527,16 +561,75 @@ function EtsyCoach({ password, onCreateSimilarListing }) {
               <h3>Shops With High Sales Volume</h3>
               <p className="subhead">
                 Ranked by total sales added up across every listing of theirs in this file — catches a
-                shop doing steady volume across many listings, not just one viral hit.
+                shop doing steady volume across many listings, not just one viral hit. Top 10 US-based
+                shops only, confirmed against Etsy's own shop data.
               </p>
-              {!marketReport.fieldsDetected.salesDataAvailable || marketReport.highVolumeShops.length === 0 ? (
+              {!marketReport.fieldsDetected.salesDataAvailable ? (
                 <p className="subhead">No sales data found in this file to rank by.</p>
+              ) : marketReport.highVolumeShops.length === 0 ? (
+                <p className="subhead">No US-based shops with sales data could be confirmed via Etsy for this file.</p>
               ) : (
-                <ul className="competitor-gap-list">
+                <ul className="competitor-gap-list market-shop-list">
                   {marketReport.highVolumeShops.map((shop) => (
-                    <li key={shop.shopName}>
-                      {shop.shopName} — {shop.totalSales} total sales across {shop.listingCount} listing
-                      {shop.listingCount === 1 ? '' : 's'} ({formatMoney(shop.totalRevenueCents)})
+                    <li className="market-shop-row" key={shop.shopId}>
+                      <div className="market-shop-header">
+                        {shop.iconUrl ? (
+                          <img className="market-shop-thumb" src={shop.iconUrl} alt="" />
+                        ) : (
+                          <span
+                            className="market-shop-thumb market-shop-thumb-placeholder"
+                            aria-hidden="true"
+                          />
+                        )}
+                        <a href={shop.shopUrl} target="_blank" rel="noreferrer">
+                          {shop.shopName}
+                        </a>
+                      </div>
+                      <p className="dashboard-task-text">
+                        {shop.totalSales} total sales across {shop.listingCount} listing
+                        {shop.listingCount === 1 ? '' : 's'} ({formatMoney(shop.totalRevenueCents)})
+                        <button
+                          type="button"
+                          className="market-shop-eye-button"
+                          onClick={() => handleToggleShopAnalysis(shop)}
+                          aria-label={`Analyze ${shop.shopName} for topper ideas`}
+                          title="Analyze for topper ideas"
+                        >
+                          👁
+                        </button>
+                      </p>
+
+                      {openShopAnalysisId === shop.shopId && (
+                        <div className="market-shop-analysis-panel">
+                          {shopAnalysisLoading && !shopAnalysisByShopId[shop.shopId] ? (
+                            <p className="subhead">Analyzing…</p>
+                          ) : shopAnalysisError && !shopAnalysisByShopId[shop.shopId] ? (
+                            <p className="error">{shopAnalysisError}</p>
+                          ) : shopAnalysisByShopId[shop.shopId] ? (
+                            shopAnalysisByShopId[shop.shopId].suggestions.length === 0 ? (
+                              <p className="subhead">
+                                {shopAnalysisByShopId[shop.shopId].topperListingsFound === 0
+                                  ? 'No cake topper or topper-style items found in this shop.'
+                                  : "Found topper-style items in this shop, but none have enough reviews yet to count as a proven seller."}
+                              </p>
+                            ) : (
+                              <ul className="competitor-gap-list">
+                                {shopAnalysisByShopId[shop.shopId].suggestions.map((suggestion) => (
+                                  <li key={suggestion.listingUrl}>
+                                    <p className="dashboard-task-text">
+                                      <a href={suggestion.listingUrl} target="_blank" rel="noreferrer">
+                                        {suggestion.itemName}
+                                      </a>
+                                    </p>
+                                    <p className="subhead">{suggestion.whyProven}</p>
+                                    <p className="subhead">{suggestion.whyRealistic}</p>
+                                  </li>
+                                ))}
+                              </ul>
+                            )
+                          ) : null}
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>

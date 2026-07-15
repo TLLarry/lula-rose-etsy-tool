@@ -63,6 +63,7 @@ import { createLowPerformersHandler } from './server/lowPerformers.js'
 import {
   createMarketResearchUploadHandler,
   createMarketResearchAddTagHandler,
+  createMarketResearchShopAnalysisHandler,
 } from './server/marketResearch.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
@@ -175,6 +176,7 @@ app.use('/api/shop-review', createShopReviewHandler(env, passwordsMatch))
 app.use('/api/low-performers', createLowPerformersHandler(env, passwordsMatch))
 app.use('/api/market-research-csv', createMarketResearchUploadHandler(env, passwordsMatch))
 app.use('/api/market-research-add-tag', createMarketResearchAddTagHandler(env, passwordsMatch))
+app.use('/api/market-research-shop-analysis', createMarketResearchShopAnalysisHandler(env, passwordsMatch))
 app.use('/api/keyword-bank-scan', createKeywordBankScanHandler(env, passwordsMatch))
 // Must be registered before '/api/keyword-bank' — app.use matches by
 // path prefix, so the more specific route needs to come first.

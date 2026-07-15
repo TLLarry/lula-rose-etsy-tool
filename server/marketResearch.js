@@ -25,6 +25,8 @@ import { readJsonBody, RequestError } from './listingApi.js'
 import { checkAppPassword, getShopListings, getShopListingById } from './db.js'
 import { fetchEtsyListing } from './etsyListing.js'
 import { updateEtsyListing } from './etsyListingUpdate.js'
+import { fetchEtsyApi, sleep } from './etsyApiClient.js'
+import { fetchActiveListings, fetchReviewAggregates } from './competitorShops.js'
 
 // Larger than the 5MB cap on the existing per-listing CSV upload
 // (server/csvUpload.js) — EverBee itself caps a single export at 3,000
@@ -35,9 +37,35 @@ const MAX_CSV_BYTES = 15 * 1024 * 1024
 const TOP_SELLERS_COUNT = 15
 const MOST_VIEWED_COUNT = 15
 const TOP_TAGS_COUNT = 30
-const HIGH_VOLUME_SHOPS_COUNT = 15
 const MISSING_TAGS_COUNT = 15
 const MAX_ETSY_TAGS = 13
+
+// "Shops With High Sales Volume" is displayed as the top 10 US-based
+// shops only (seller's own instruction). Etsy's public API doesn't
+// expose location on the CSV row itself, only on the real shop
+// record, so this walks the CSV-ranked candidates (already sorted by
+// total sales — same ranking logic as before, untouched) checking
+// each one's real Etsy shop data via a live lookup, until either 10
+// US-based shops are confirmed or this many candidates have been
+// checked. Chosen deliberately larger than the final display count so
+// a file with a lot of non-US shops mixed in still has a real shot at
+// filling all 10 slots.
+const HIGH_VOLUME_ENRICHMENT_POOL = 40
+const HIGH_VOLUME_US_DISPLAY_COUNT = 10
+// A specific listing's own review count is the only real proof-of-
+// purchase signal Etsy's public API exposes per listing (a review can
+// only be posted after a completed sale) — there is no per-listing
+// sold-count field, confirmed against the live API before building
+// this. 3+ is a small but real repeat-purchase pattern, not a single
+// fluke sale.
+const PROVEN_TOPPER_REVIEW_THRESHOLD = 3
+const TOPPER_KEYWORD = /topper/i
+
+const ETSY_API_BASE = 'https://api.etsy.com/v3/application'
+
+function apiKeyHeader(env) {
+  return { 'x-api-key': `${env.ETSY_API_KEY}:${env.ETSY_SHARED_SECRET}` }
+}
 
 // Candidate header substrings per logical field, most-likely-real-
 // wording first. First column whose header contains any candidate
@@ -269,9 +297,13 @@ function buildMarketResearchReport(rows, columnMap, myTagKeys = new Set()) {
       })
     }
   }
-  const highVolumeShops = [...shopTotals.values()]
+  // Not the final displayed list — an internal candidate pool, still
+  // sorted by the same ranking (total sales desc). The handler below
+  // walks this to find the top 10 that are actually US-based via a
+  // live Etsy lookup before it's sent to the client.
+  const highVolumeShopsPool = [...shopTotals.values()]
     .sort((a, b) => b.totalSales - a.totalSales)
-    .slice(0, HIGH_VOLUME_SHOPS_COUNT)
+    .slice(0, HIGH_VOLUME_ENRICHMENT_POOL)
 
   // The actual task: which of this category's real, working tags are
   // you not using ANYWHERE in your own shop yet — ranked by how common
@@ -291,13 +323,75 @@ function buildMarketResearchReport(rows, columnMap, myTagKeys = new Set()) {
     topTags,
     missingTags,
     mostViewed,
-    highVolumeShops,
+    highVolumeShopsPool,
     fieldsDetected: {
       salesDataAvailable: usRows.some((row) => typeof row.sales === 'number'),
       viewsDataAvailable: usRows.some((row) => typeof row.views === 'number'),
       tagsDataAvailable: usRows.some((row) => row.tags.length > 0),
     },
   }
+}
+
+// GET /shops?shop_name=X — resolves a CSV shop name to Etsy's real,
+// live shop record (numeric id, url, icon, is_shop_us_based, etc).
+// Written as its own private copy here rather than reusing
+// competitorShops.js's resolveCompetitorShop (which parses a shop
+// LINK, not a bare name, and throws on a miss) — this file walks many
+// candidate names and needs to quietly skip a miss and try the next
+// one, not abort the whole report on one unresolved shop.
+async function lookupEtsyShopByName(env, shopName) {
+  try {
+    const response = await fetchEtsyApi(
+      `${ETSY_API_BASE}/shops?shop_name=${encodeURIComponent(shopName)}`,
+      { headers: apiKeyHeader(env) }
+    )
+    if (!response.ok) return null
+    const data = await response.json()
+    return data.results?.[0] || null
+  } catch {
+    return null
+  }
+}
+
+// Walks the CSV-ranked candidate pool (already sorted by total sales,
+// same ranking as before) and checks each shop's real Etsy record.
+// is_shop_us_based is a real field Etsy returns on the live shop
+// lookup (confirmed against the API directly) — not a guess from a
+// CSV location column. A shop that can't be resolved on Etsy at all,
+// or isn't US-based, is excluded rather than guessed at, per
+// instruction. Stops once 10 US-based shops are confirmed or the pool
+// is exhausted, whichever comes first.
+async function enrichHighVolumeShopsWithEtsyData(env, rankedShops) {
+  const enriched = []
+
+  for (let i = 0; i < rankedShops.length && enriched.length < HIGH_VOLUME_US_DISPLAY_COUNT; i++) {
+    if (i > 0) await sleep(120)
+    const etsyShop = await lookupEtsyShopByName(env, rankedShops[i].shopName)
+    if (!etsyShop || !etsyShop.is_shop_us_based) continue
+
+    enriched.push({
+      ...rankedShops[i],
+      shopId: etsyShop.shop_id,
+      shopUrl: etsyShop.url,
+      iconUrl: etsyShop.icon_url_fullxfull || null,
+    })
+  }
+
+  return enriched
+}
+
+// Does a specific listing look like a cake topper / topper-style
+// product? Matched against both the title and its tags — a listing
+// titled generically but tagged "cake topper" should still count.
+function isTopperListing(listing) {
+  return TOPPER_KEYWORD.test(listing.title) || listing.tags.some((tag) => TOPPER_KEYWORD.test(tag))
+}
+
+// The one-click "why would this be realistic for me" line. Grounded
+// only in the seller's own real, verifiable listing count — no
+// invented claim about what category their shop is in.
+function buildRealismLine(myListingCount) {
+  return `You already have ${myListingCount} active listings — a topper is a low-cost, easy item to test alongside what's already selling.`
 }
 
 // POST /api/market-research-csv, body { filename, content } — same
@@ -325,9 +419,80 @@ function createMarketResearchUploadHandler(env, passwordsMatch) {
           listing.tags_json ? JSON.parse(listing.tags_json).map((tag) => tag.trim().toLowerCase()) : []
         )
       )
-      const report = buildMarketResearchReport(rows, columnMap, myTagKeys)
+      const { highVolumeShopsPool, ...report } = buildMarketResearchReport(rows, columnMap, myTagKeys)
+      const highVolumeShops = await enrichHighVolumeShopsWithEtsyData(env, highVolumeShopsPool)
 
-      res.end(JSON.stringify({ ok: true, headersFound: headers, columnMap, warnings, report }))
+      res.end(
+        JSON.stringify({
+          ok: true,
+          headersFound: headers,
+          columnMap,
+          warnings,
+          report: { ...report, highVolumeShops },
+        })
+      )
+    } catch (err) {
+      res.statusCode = err.status || 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
+// GET /api/market-research-shop-analysis?shopId=X — the eye-icon
+// action on a "Shops With High Sales Volume" row. Pulls that shop's
+// real active listings + review data fresh (nothing cached/stored —
+// this is a one-off lookup, not a tracked competitor shop), finds
+// cake-topper-style listings, and only surfaces one as a suggestion if
+// that SPECIFIC listing has real proof of a completed sale (its own
+// review count), never just because the item exists in their shop.
+function createMarketResearchShopAnalysisHandler(env, passwordsMatch) {
+  return async (req, res) => {
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      const queryString = req.url.includes('?') ? req.url.split('?')[1] : ''
+      const shopId = new URLSearchParams(queryString).get('shopId')
+      if (!shopId) {
+        throw new RequestError(400, 'A shopId is required.')
+      }
+
+      const [listings, reviewAggregates] = await Promise.all([
+        fetchActiveListings(env, shopId),
+        fetchReviewAggregates(env, shopId),
+      ])
+
+      const topperListings = listings.filter(isTopperListing)
+      const myListingCount = getShopListings().length
+      const realismLine = buildRealismLine(myListingCount)
+
+      const suggestions = topperListings
+        .map((listing) => ({
+          itemName: listing.title,
+          listingUrl: listing.url,
+          reviewCount: reviewAggregates.reviewCountByListingId[listing.listingId] || 0,
+        }))
+        .filter((entry) => entry.reviewCount >= PROVEN_TOPPER_REVIEW_THRESHOLD)
+        .sort((a, b) => b.reviewCount - a.reviewCount)
+        .map((entry) => ({
+          ...entry,
+          whyProven: `${entry.reviewCount} reviews on this exact listing — Etsy only allows a review after a completed purchase, so this is real evidence of sales, not just views or favorites.`,
+          whyRealistic: realismLine,
+        }))
+
+      res.end(
+        JSON.stringify({
+          ok: true,
+          shopListingCount: listings.length,
+          topperListingsFound: topperListings.length,
+          suggestions,
+        })
+      )
     } catch (err) {
       res.statusCode = err.status || 500
       res.end(JSON.stringify({ error: err.message }))
@@ -395,4 +560,5 @@ export {
   buildMarketResearchReport,
   createMarketResearchUploadHandler,
   createMarketResearchAddTagHandler,
+  createMarketResearchShopAnalysisHandler,
 }

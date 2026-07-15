@@ -60,6 +60,7 @@ import { createLowPerformersHandler } from './server/lowPerformers.js'
 import {
   createMarketResearchUploadHandler,
   createMarketResearchAddTagHandler,
+  createMarketResearchShopAnalysisHandler,
 } from './server/marketResearch.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
@@ -206,6 +207,10 @@ function etsyTitleWriterPlugin(env) {
       server.middlewares.use(
         '/api/market-research-add-tag',
         createMarketResearchAddTagHandler(env, passwordsMatch)
+      )
+      server.middlewares.use(
+        '/api/market-research-shop-analysis',
+        createMarketResearchShopAnalysisHandler(env, passwordsMatch)
       )
       server.middlewares.use(
         '/api/keyword-bank-scan',

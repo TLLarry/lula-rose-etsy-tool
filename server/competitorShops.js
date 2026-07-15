@@ -801,4 +801,5 @@ export {
   buildCompetitorIdeas,
   createDashboardIdeasHandler,
   fetchActiveListings,
+  fetchReviewAggregates,
 }
