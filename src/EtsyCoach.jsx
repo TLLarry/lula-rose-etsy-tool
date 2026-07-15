@@ -484,10 +484,8 @@ function EtsyCoach({ password, onCreateSimilarListing }) {
                     <li className="dashboard-task-row" key={entry.tag}>
                       <p className="dashboard-task-text">
                         "{entry.tag}" — used by {entry.count.toLocaleString()} of{' '}
-                        {marketReport.filteredByCountry
-                          ? `${marketReport.usRowCount.toLocaleString()} US listings`
-                          : `${marketReport.totalRows.toLocaleString()} listings (not filtered by country — see note above)`}{' '}
-                        in this category
+                        {marketReport.missingTagsUsListingCount.toLocaleString()} US listings in this
+                        category
                       </p>
                       <div className="dashboard-task-actions">
                         {tagApplySuccess[entry.tag] ? (

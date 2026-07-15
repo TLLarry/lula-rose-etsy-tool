@@ -37,8 +37,20 @@ const MAX_CSV_BYTES = 15 * 1024 * 1024
 const TOP_SELLERS_COUNT = 15
 const MOST_VIEWED_COUNT = 15
 const TOP_TAGS_COUNT = 30
-const MISSING_TAGS_COUNT = 15
+const MISSING_TAGS_COUNT = 10
 const MAX_ETSY_TAGS = 13
+// Missing Tags needs a REAL US-listing count, not the CSV's own
+// location/currency guess (which is often just absent entirely — the
+// same fallback that used to print "not filtered by country"). Every
+// distinct shop name in the file is resolved against Etsy's real
+// is_shop_us_based field instead, deduped so one shop is never looked
+// up twice. Capped as a safety valve against a pathological file with
+// thousands of distinct shops turning one upload into a multi-minute
+// request — shops beyond the cap are excluded from the count rather
+// than guessed at, same "exclude, don't guess" rule used everywhere
+// else in this file.
+const SHOP_RESOLUTION_CAP = 300
+const SHOP_RESOLUTION_CONCURRENCY = 5
 
 // "Shops With High Sales Volume" is displayed as the top 10 US-based
 // shops only (seller's own instruction). Etsy's public API doesn't
@@ -348,23 +360,12 @@ function buildMarketResearchReport(rows, columnMap, myTagKeys = new Set()) {
     .sort((a, b) => b.totalSales - a.totalSales)
     .slice(0, HIGH_VOLUME_ENRICHMENT_POOL)
 
-  // The actual task: which of this category's real, working tags are
-  // you not using ANYWHERE in your own shop yet — ranked by how common
-  // they are across the category, so the top of this list is the
-  // highest-value gap, not just an alphabetical dump. This is what
-  // turns "here are the top tags" from a fact you'd have to act on
-  // yourself into something with a real, one-click fix right below it.
-  const missingTags = topTags
-    .filter((entry) => !myTagKeys.has(entry.tag.toLowerCase()))
-    .slice(0, MISSING_TAGS_COUNT)
-
   return {
     totalRows: rows.length,
     usRowCount: usRows.length,
     filteredByCountry: hasAnyLocationSignal,
     topSellers,
     topTags,
-    missingTags,
     mostViewed,
     highVolumeShopsPool,
     fieldsDetected: {
@@ -396,6 +397,21 @@ async function lookupEtsyShopByName(env, shopName) {
   }
 }
 
+// A single upload can need the same shop's real Etsy record for two
+// different reasons (the high-volume-shops enrichment below AND the
+// missing-tags US-filtering) — this cache (one per request) makes
+// sure a shop that appears in both is only ever looked up once.
+function createShopLookupCache() {
+  return new Map()
+}
+
+async function lookupEtsyShopByNameCached(env, shopName, cache) {
+  if (cache.has(shopName)) return cache.get(shopName)
+  const shop = await lookupEtsyShopByName(env, shopName)
+  cache.set(shopName, shop)
+  return shop
+}
+
 // Walks the CSV-ranked candidate pool (already sorted by total sales,
 // same ranking as before) and checks each shop's real Etsy record.
 // is_shop_us_based is a real field Etsy returns on the live shop
@@ -404,12 +420,12 @@ async function lookupEtsyShopByName(env, shopName) {
 // or isn't US-based, is excluded rather than guessed at, per
 // instruction. Stops once 10 US-based shops are confirmed or the pool
 // is exhausted, whichever comes first.
-async function enrichHighVolumeShopsWithEtsyData(env, rankedShops) {
+async function enrichHighVolumeShopsWithEtsyData(env, rankedShops, cache) {
   const enriched = []
 
   for (let i = 0; i < rankedShops.length && enriched.length < HIGH_VOLUME_US_DISPLAY_COUNT; i++) {
-    if (i > 0) await sleep(120)
-    const etsyShop = await lookupEtsyShopByName(env, rankedShops[i].shopName)
+    if (i > 0 && !cache.has(rankedShops[i].shopName)) await sleep(120)
+    const etsyShop = await lookupEtsyShopByNameCached(env, rankedShops[i].shopName, cache)
     if (!etsyShop || !etsyShop.is_shop_us_based) continue
 
     enriched.push({
@@ -421,6 +437,103 @@ async function enrichHighVolumeShopsWithEtsyData(env, rankedShops) {
   }
 
   return enriched
+}
+
+// A real Etsy listing title is never just digits, but tag WORDING
+// varies more subtly — "cupcake topper" vs "cupcake toppers" are the
+// same real keyword idea, not two distinct ones. Folds a simple
+// trailing-s plural down to its singular form for GROUPING purposes
+// only (the display text keeps whichever exact spelling was most
+// common — see buildDedupedTagCounts below).
+function normalizeTagForDedup(tag) {
+  const lower = tag.trim().toLowerCase()
+  return lower.endsWith('s') && !lower.endsWith('ss') ? lower.slice(0, -1) : lower
+}
+
+// Groups a set of rows' tags by normalized (near-duplicate-merged)
+// key, counting each listing at most once per group even if that one
+// listing used two near-duplicate spellings in different tag slots
+// (e.g. both "cake topper" and "cake toppers"). The displayed label
+// for each group is whichever exact spelling was most common.
+function buildDedupedTagCounts(rowsForTags) {
+  const byNormalized = new Map()
+  for (const row of rowsForTags) {
+    const seenInRow = new Set()
+    for (const tag of row.tags) {
+      const norm = normalizeTagForDedup(tag)
+      if (seenInRow.has(norm)) continue
+      seenInRow.add(norm)
+
+      const existing = byNormalized.get(norm)
+      if (existing) {
+        existing.count += 1
+        existing.spellingCounts.set(tag, (existing.spellingCounts.get(tag) || 0) + 1)
+      } else {
+        byNormalized.set(norm, { count: 1, spellingCounts: new Map([[tag, 1]]) })
+      }
+    }
+  }
+
+  return [...byNormalized.entries()].map(([, { count, spellingCounts }]) => {
+    const canonicalTag = [...spellingCounts.entries()].sort((a, b) => b[1] - a[1])[0][0]
+    return { tag: canonicalTag, count }
+  })
+}
+
+// Resolves every DISTINCT shop name in the file against Etsy's real
+// is_shop_us_based field, in small concurrent batches (paced between
+// batches) rather than one at a time — a full category file can have
+// hundreds of distinct shops even when the CSV has no usable
+// location/currency column at all (the previous "not filtered by
+// country" fallback case). Capped at SHOP_RESOLUTION_CAP as a safety
+// valve; shops beyond the cap are simply not resolved and their rows
+// are excluded from the US count, never guessed at.
+async function resolveShopsUsStatus(env, shopNames, cache) {
+  const uniqueNames = [...new Set(shopNames.filter(Boolean))].slice(0, SHOP_RESOLUTION_CAP)
+  const statusByShopName = new Map()
+
+  for (let i = 0; i < uniqueNames.length; i += SHOP_RESOLUTION_CONCURRENCY) {
+    const batch = uniqueNames.slice(i, i + SHOP_RESOLUTION_CONCURRENCY)
+    const toResolve = batch.filter((name) => !cache.has(name))
+    if (toResolve.length > 0 && i > 0) await sleep(150)
+
+    await Promise.all(
+      toResolve.map(async (name) => {
+        const shop = await lookupEtsyShopByName(env, name)
+        cache.set(name, shop)
+      })
+    )
+    for (const name of batch) {
+      const shop = cache.get(name)
+      statusByShopName.set(name, shop ? Boolean(shop.is_shop_us_based) : null)
+    }
+  }
+
+  return statusByShopName
+}
+
+// Tags You're Missing's own independent pipeline — deliberately NOT
+// reusing topTags (which stays on the CSV's own location/currency
+// guess, unchanged, since Top Tags & Keywords still displays that
+// exact data). This resolves real US status per shop via Etsy first,
+// then counts tags (with near-duplicate merging) only across
+// confirmed US listings, so both the ranked list AND its "N of M US
+// listings" denominator are real, not estimated.
+async function buildMissingTagsReport(env, rows, myTagKeys, cache) {
+  const distinctShopNames = rows.map((row) => row.shopName)
+  const statusByShopName = await resolveShopsUsStatus(env, distinctShopNames, cache)
+  const etsyUsRows = rows.filter((row) => statusByShopName.get(row.shopName) === true)
+
+  const myTagKeysNormalized = new Set([...myTagKeys].map((tag) => normalizeTagForDedup(tag)))
+
+  const missingTags = buildDedupedTagCounts(etsyUsRows)
+    .filter(
+      (entry) => !myTagKeys.has(entry.tag.toLowerCase()) && !myTagKeysNormalized.has(normalizeTagForDedup(entry.tag))
+    )
+    .sort((a, b) => b.count - a.count)
+    .slice(0, MISSING_TAGS_COUNT)
+
+  return { missingTags, usListingCount: etsyUsRows.length }
 }
 
 // Etsy listing URLs are always /listing/{numericId}/... — the CSV
@@ -510,7 +623,12 @@ function createMarketResearchUploadHandler(env, passwordsMatch) {
         )
       )
       const { highVolumeShopsPool, ...report } = buildMarketResearchReport(rows, columnMap, myTagKeys)
-      const highVolumeShops = await enrichHighVolumeShopsWithEtsyData(env, highVolumeShopsPool)
+
+      const shopLookupCache = createShopLookupCache()
+      const missingTagsResult = report.fieldsDetected.tagsDataAvailable
+        ? await buildMissingTagsReport(env, rows, myTagKeys, shopLookupCache)
+        : { missingTags: [], usListingCount: 0 }
+      const highVolumeShops = await enrichHighVolumeShopsWithEtsyData(env, highVolumeShopsPool, shopLookupCache)
       const mostViewed = await enrichMostViewedWithThumbnails(env, report.mostViewed)
 
       res.end(
@@ -519,7 +637,13 @@ function createMarketResearchUploadHandler(env, passwordsMatch) {
           headersFound: headers,
           columnMap,
           warnings,
-          report: { ...report, highVolumeShops, mostViewed },
+          report: {
+            ...report,
+            highVolumeShops,
+            mostViewed,
+            missingTags: missingTagsResult.missingTags,
+            missingTagsUsListingCount: missingTagsResult.usListingCount,
+          },
         })
       )
     } catch (err) {
