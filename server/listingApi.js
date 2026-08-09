@@ -617,7 +617,20 @@ const EMPTY_SPECS = {
   howToOrder: '',
 }
 
-function buildExtrasTextPrompt(description, keywords, title, hasImages, facts, provenKeywords = [], themeParagraph = null) {
+// sellerBlockParagraph is the draft-flow instruction from
+// server/etsyDrafts.js: the seller's typed text is inserted into the
+// final description by code, so the model is told not to reproduce or
+// duplicate it. Every other caller passes nothing.
+function buildExtrasTextPrompt(
+  description,
+  keywords,
+  title,
+  hasImages,
+  facts,
+  provenKeywords = [],
+  themeParagraph = null,
+  sellerBlockParagraph = null
+) {
   const parts = [`Etsy title already generated for this listing: ${title}`]
 
   const factsBlock = buildSellerFactsBlock(facts)
@@ -641,10 +654,22 @@ function buildExtrasTextPrompt(description, keywords, title, hasImages, facts, p
   const provenParagraph = buildProvenKeywordsParagraph(provenKeywords)
   if (provenParagraph) parts.push(provenParagraph)
   if (themeParagraph) parts.push(themeParagraph)
+  // Last, so it's the final instruction before the model answers — it
+  // overrides the generic SPECS/SPEC LINES rules in the system prompt.
+  if (sellerBlockParagraph) parts.push(sellerBlockParagraph)
   return parts.join('\n\n')
 }
 
-function buildExtrasContent(description, keywords, title, images, facts, provenKeywords = [], themeParagraph = null) {
+function buildExtrasContent(
+  description,
+  keywords,
+  title,
+  images,
+  facts,
+  provenKeywords = [],
+  themeParagraph = null,
+  sellerBlockParagraph = null
+) {
   const imageBlocks = buildLabeledImageContentBlocks(images)
   const textPrompt = buildExtrasTextPrompt(
     description,
@@ -653,7 +678,8 @@ function buildExtrasContent(description, keywords, title, images, facts, provenK
     images.length > 0,
     facts,
     provenKeywords,
-    themeParagraph
+    themeParagraph,
+    sellerBlockParagraph
   )
   return [...imageBlocks, { type: 'text', text: textPrompt }]
 }
@@ -793,7 +819,8 @@ async function generateListingExtras(
   images,
   facts,
   provenKeywords = [],
-  themeParagraph = null
+  themeParagraph = null,
+  sellerBlockParagraph = null
 ) {
   const client = new Anthropic({ apiKey })
   const response = await client.messages.create({
@@ -807,7 +834,16 @@ async function generateListingExtras(
     messages: [
       {
         role: 'user',
-        content: buildExtrasContent(description, keywords, title, images, facts, provenKeywords, themeParagraph),
+        content: buildExtrasContent(
+          description,
+          keywords,
+          title,
+          images,
+          facts,
+          provenKeywords,
+          themeParagraph,
+          sellerBlockParagraph
+        ),
       },
     ],
   })

@@ -70,6 +70,7 @@ import {
   createThemeKeywordsHandler,
   createThemePreviewHandler,
 } from './server/themeKeywordBank.js'
+import { createDraftsListHandler, createDraftRewriteHandler } from './server/etsyDrafts.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
 import {
   createShopReviewHandler,
@@ -144,6 +145,8 @@ app.use('/api/shop-sections', createShopSectionsHandler(env, passwordsMatch))
 // order here matters for the same reason it does in vite.config.js.
 app.use('/api/theme-keywords/preview', createThemePreviewHandler(env, passwordsMatch))
 app.use('/api/theme-keywords', createThemeKeywordsHandler(env, passwordsMatch))
+app.use('/api/etsy-drafts', createDraftsListHandler(env, passwordsMatch))
+app.use('/api/draft-rewrite', createDraftRewriteHandler(env, passwordsMatch))
 app.use('/api/update-listing', updateListingHandler(env, passwordsMatch))
 app.use('/api/etsy-taxonomy', createEtsyTaxonomyHandler(env, passwordsMatch))
 app.use('/api/parse-listing-csv', createParseListingCsvHandler(env, passwordsMatch))
