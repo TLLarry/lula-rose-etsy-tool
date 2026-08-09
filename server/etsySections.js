@@ -186,10 +186,43 @@ function createRecordSectionProgressHandler(env, passwordsMatch) {
   }
 }
 
+// GET /api/shop-sections. Returns every section in this shop, live —
+// used by Listing Revamp's multi-variation draft duplication feature to
+// populate a per-slot Shop Section dropdown that always reflects
+// however the seller has actually organized their shop right now,
+// rather than a hardcoded/stale list. Same x-app-password auth as every
+// other endpoint; no input needed, unlike resolveSectionInput above.
+function createShopSectionsHandler(env, passwordsMatch) {
+  return async (req, res) => {
+    if (req.method !== 'GET') {
+      res.statusCode = 405
+      res.end('Method Not Allowed')
+      return
+    }
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+
+    try {
+      if (!isEtsyConfigured(env)) {
+        throw new RequestError(
+          503,
+          `Etsy isn't configured yet — missing: ${getMissingEtsyEnvVars(env).join(', ')}.`
+        )
+      }
+      const sections = await fetchShopSections(env)
+      res.end(JSON.stringify({ ok: true, sections }))
+    } catch (err) {
+      res.statusCode = err.status || 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
 export {
   fetchShopSections,
   fetchSectionListingIds,
   resolveSectionInput,
   createResolveSectionHandler,
   createRecordSectionProgressHandler,
+  createShopSectionsHandler,
 }

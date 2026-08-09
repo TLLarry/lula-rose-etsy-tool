@@ -24,6 +24,7 @@ import { createDraftListingHandler } from './server/etsyListingDraft.js'
 import {
   createResolveSectionHandler,
   createRecordSectionProgressHandler,
+  createShopSectionsHandler,
 } from './server/etsySections.js'
 import { updateListingHandler } from './server/etsyListingUpdate.js'
 import { createEtsyTaxonomyHandler } from './server/etsyTaxonomy.js'
@@ -116,6 +117,7 @@ function etsyTitleWriterPlugin(env) {
         '/api/section-revamp-progress',
         createRecordSectionProgressHandler(env, passwordsMatch)
       )
+      server.middlewares.use('/api/shop-sections', createShopSectionsHandler(env, passwordsMatch))
       server.middlewares.use('/api/update-listing', updateListingHandler(env, passwordsMatch))
       server.middlewares.use(
         '/api/etsy-taxonomy',

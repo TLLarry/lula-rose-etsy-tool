@@ -70,6 +70,7 @@ function validateDraftListingInput(body) {
     whenMade,
     isSupply,
     taxonomyId,
+    shopSectionId,
     shippingProfileId,
     readinessStateId,
     itemWeight,
@@ -114,6 +115,13 @@ function validateDraftListingInput(body) {
   }
   if (!Number.isInteger(taxonomyId) || taxonomyId <= 0) {
     throw new RequestError(400, 'A valid taxonomy_id is required — pick a category first.')
+  }
+  // Optional — a listing with no shop section is a normal, valid Etsy
+  // listing. Only validated as a real positive integer when actually
+  // provided; a falsy value (undefined/null/0/'') means "no section" and
+  // shop_section_id is simply omitted from the write below.
+  if (shopSectionId !== undefined && shopSectionId !== null && (!Number.isInteger(shopSectionId) || shopSectionId <= 0)) {
+    throw new RequestError(400, 'shopSectionId must be a positive integer if provided.')
   }
   if (!Number.isInteger(shippingProfileId) || shippingProfileId <= 0) {
     throw new RequestError(
@@ -185,6 +193,7 @@ function validateDraftListingInput(body) {
     whenMade,
     isSupply: typeof isSupply === 'boolean' ? isSupply : null,
     taxonomyId,
+    shopSectionId: Number.isInteger(shopSectionId) && shopSectionId > 0 ? shopSectionId : null,
     shippingProfileId,
     readinessStateId,
     itemWeight: typeof itemWeight === 'number' ? itemWeight : null,
@@ -218,6 +227,7 @@ function buildDraftListingBody({
   whenMade,
   isSupply,
   taxonomyId,
+  shopSectionId,
   shippingProfileId,
   readinessStateId,
   itemWeight,
@@ -239,6 +249,9 @@ function buildDraftListingBody({
   // pattern as the other optional fields below.
   if (isSupply !== null && isSupply !== undefined) params.set('is_supply', String(isSupply))
   params.set('taxonomy_id', String(taxonomyId))
+  // Optional — omitted entirely means "no section," same as any normal
+  // Etsy listing created without one.
+  if (shopSectionId) params.set('shop_section_id', String(shopSectionId))
   params.set('shipping_profile_id', String(shippingProfileId))
   params.set('readiness_state_id', String(readinessStateId))
   if (tags.length > 0) {
@@ -323,9 +336,9 @@ async function createEtsyDraftListing(env, listingInput) {
 
 // POST /api/create-draft-listing, body { title, description, tags,
 // quantity, price, whoMade, whenMade, isSupply?, taxonomyId,
-// shippingProfileId, readinessStateId, images?, properties?,
-// sourceImages?, sourceVideo? }. Same x-app-password auth as every
-// other endpoint.
+// shopSectionId?, shippingProfileId, readinessStateId, images?,
+// properties?, sourceImages?, sourceVideo? }. Same x-app-password auth as
+// every other endpoint.
 function createDraftListingHandler(env, passwordsMatch) {
   return async (req, res) => {
     if (req.method !== 'POST') {

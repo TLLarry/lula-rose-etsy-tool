@@ -4,9 +4,9 @@ import TaxonomyPicker from './TaxonomyPicker'
 import { getCategoryDefaults } from './categoryDefaults'
 import {
   detectBalloonMaterial,
-  getBalloonCategorySet,
   isKnownBalloonCategory,
   BALLOON_FIELD_DEFAULTS,
+  MULTI_DRAFT_CATEGORIES,
 } from './balloonCategories'
 import {
   OCCASION_PROPERTY_ID,
@@ -27,6 +27,7 @@ const MAX_ALT_TEXT_LENGTH = 125
 // Pause takes effect after the current CLUSTER finishes (not mid-
 // listing) — this is the cluster size that boundary is checked against.
 const SECTION_CLUSTER_SIZE = 10
+const MAX_VARIATION_COUNT = 4
 
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
@@ -225,13 +226,29 @@ function ListingRevamp({
   const [creatingDraft, setCreatingDraft] = useState(false)
   const [draftCreateResult, setDraftCreateResult] = useState(null)
   const [draftCreateError, setDraftCreateError] = useState('')
-  // Balloons multi-category duplication (see balloonCategories.js) —
-  // one draft per legitimate category for the detected material, each
-  // with no images (the seller adds distinct images per draft
-  // manually). Results are per-category so a partial failure (e.g. one
+  // Balloons multi-variation draft duplication (see balloonCategories.js)
+  // — the seller types how many drafts to create (1-4, never defaulted)
+  // and picks a Shop Section + Etsy Category independently for each one.
+  // variationCount is the raw text field value (kept as a string so an
+  // empty/invalid field is distinguishable from a real 0); variationSlots
+  // is only ever resized to match a currently-VALID count, so it's the
+  // thing everything else (rendering the slot rows, the submit button)
+  // actually reads. Results are per-slot so a partial failure (e.g. one
   // category rejected) doesn't hide which drafts DID succeed.
+  const [variationCount, setVariationCount] = useState('')
+  const [variationSlots, setVariationSlots] = useState([])
   const [creatingBalloonDrafts, setCreatingBalloonDrafts] = useState(false)
   const [balloonDraftResults, setBalloonDraftResults] = useState(null)
+
+  // Shop sections — fetched live from Etsy (never hardcoded) the first
+  // time this feature becomes relevant, then cached for the rest of the
+  // session (sections don't change fast enough to need re-fetching on
+  // every listing load). shopSectionsFetchedRef guards against re-fetching
+  // on every render once loaded/attempted.
+  const [shopSections, setShopSections] = useState([])
+  const [loadingShopSections, setLoadingShopSections] = useState(false)
+  const [shopSectionsError, setShopSectionsError] = useState('')
+  const shopSectionsFetchedRef = useRef(false)
   const [updatingListing, setUpdatingListing] = useState(false)
   const [updateListingResult, setUpdateListingResult] = useState(null)
   const [updateListingError, setUpdateListingError] = useState('')
@@ -1180,6 +1197,8 @@ function ListingRevamp({
     setDraftCreateResult(null)
     setDraftCreateError('')
 
+    setVariationCount('')
+    setVariationSlots([])
     setCreatingBalloonDrafts(false)
     setBalloonDraftResults(null)
 
@@ -1206,9 +1225,35 @@ function ListingRevamp({
         description: `${draftHeader} ${draftBody}`,
       })
     : null
-  const balloonCategorySet = detectedBalloonMaterial
-    ? getBalloonCategorySet(detectedBalloonMaterial)
-    : null
+  // Gates whether the multi-variation draft duplication controls show at
+  // all — material detection no longer decides WHICH categories are
+  // offered (every slot picks freely from MULTI_DRAFT_CATEGORIES), so an
+  // undetected material is no longer a dead end the way it used to be:
+  // any listing that looks balloon-related by title still gets the full
+  // manual controls, not just a "couldn't determine material" note.
+  const looksLikeBalloonListing =
+    Boolean(detectedBalloonMaterial) || /balloon/i.test(listing?.title || '')
+
+  // Fetches this shop's real sections once, the first time the balloon
+  // controls become relevant — never on mount unconditionally, since most
+  // sessions never touch this feature. Sections are shop-wide (not
+  // per-listing), so this deliberately only ever runs once per session,
+  // not once per loaded listing.
+  useEffect(() => {
+    if (!looksLikeBalloonListing || shopSectionsFetchedRef.current) return
+    shopSectionsFetchedRef.current = true
+    setLoadingShopSections(true)
+    setShopSectionsError('')
+    fetch('/api/shop-sections', { headers: { 'x-app-password': password } })
+      .then(async (response) => {
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'Failed to load your shop sections.')
+        setShopSections(data.sections)
+      })
+      .catch((err) => setShopSectionsError(err.message))
+      .finally(() => setLoadingShopSections(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [looksLikeBalloonListing])
 
   // Materials/Occasion/Holiday for a single draft going to taxonomyId —
   // gated to the 4 categories this feature actually verified property
@@ -1232,24 +1277,64 @@ function ListingRevamp({
     return properties
   }
 
-  // Creates one draft per category in balloonCategorySet — same title/
+  // Resizes variationSlots to match a newly-typed count — 1-4 only, never
+  // defaulted; anything blank or out of range collapses back to no slots
+  // at all (nothing renders below the number field until it holds a
+  // real, valid count). Preserves whatever a slot already had selected
+  // when the count changes (e.g. typing 3 then 4 keeps slots 1-3 as they
+  // were and just appends a blank slot 4), rather than resetting
+  // everything on every keystroke.
+  const handleVariationCountChange = (rawValue) => {
+    setVariationCount(rawValue)
+    setBalloonDraftResults(null)
+    const parsed = Number(rawValue)
+    const valid = rawValue !== '' && Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_VARIATION_COUNT
+    if (!valid) {
+      setVariationSlots([])
+      return
+    }
+    setVariationSlots((prev) => {
+      const next = prev.slice(0, parsed)
+      while (next.length < parsed) next.push({ shopSectionId: '', taxonomyId: '' })
+      return next
+    })
+  }
+
+  // Shop Section and Etsy Category are independent per slot, on purpose
+  // — neither of these ever reads or sets the other, and neither is
+  // auto-filled from material detection. Each updater only ever touches
+  // its own field on its own slot.
+  const handleSlotShopSectionChange = (index, value) => {
+    setVariationSlots((prev) => prev.map((slot, i) => (i === index ? { ...slot, shopSectionId: value } : slot)))
+  }
+  const handleSlotCategoryChange = (index, value) => {
+    setVariationSlots((prev) => prev.map((slot, i) => (i === index ? { ...slot, taxonomyId: value } : slot)))
+  }
+
+  // Creates one draft per slot in variationSlots — same title/
   // description/tags/quantity/price/shipping/readiness/dimensions
-  // carried over exactly like the single Draft button above, but a
-  // different taxonomyId each time and NO images (the seller adds
-  // distinct images per draft manually afterward, same reasoning as the
-  // single-draft flow's own image-upload step). who_made/is_supply are
-  // always the Balloons defaults (see BALLOON_FIELD_DEFAULTS) regardless
-  // of which specific sibling/parent category a given draft lands in —
-  // it's the same physical balloon supply product throughout, just
-  // filed under a different discovery path each time. Failures are
-  // per-category so one rejected category (e.g. a bad taxonomy_id)
-  // doesn't hide drafts that DID succeed.
+  // carried over exactly like the single Draft button above, but each
+  // slot's own independently-chosen taxonomyId/shopSectionId and NO
+  // images (the seller adds distinct images per draft manually
+  // afterward, same reasoning as the single-draft flow's own
+  // image-upload step). who_made/is_supply are always the Balloons
+  // defaults (see BALLOON_FIELD_DEFAULTS) regardless of which category/
+  // section a given draft lands in — it's the same physical balloon
+  // supply product throughout, just filed under a different discovery
+  // path each time. Failures are per-slot so one rejected slot (e.g. a
+  // bad taxonomy_id) doesn't hide drafts that DID succeed.
   const handleCreateBalloonCategoryDrafts = async () => {
-    if (!listing || !balloonCategorySet) return
+    if (!listing || variationSlots.length === 0) return
     setCreatingBalloonDrafts(true)
     setBalloonDraftResults(null)
     const results = []
-    for (const category of balloonCategorySet) {
+    for (const slot of variationSlots) {
+      const taxonomyId = Number(slot.taxonomyId)
+      const category = MULTI_DRAFT_CATEGORIES.find((c) => c.taxonomyId === taxonomyId)
+      const section = slot.shopSectionId
+        ? shopSections.find((s) => String(s.id) === String(slot.shopSectionId))
+        : null
+      const label = `${category?.label ?? 'Unknown category'} → ${section ? section.title : 'No section'}`
       try {
         const response = await fetch('/api/create-draft-listing', {
           method: 'POST',
@@ -1263,7 +1348,8 @@ function ListingRevamp({
             whoMade: BALLOON_FIELD_DEFAULTS.whoMade,
             whenMade: listing.whenMade,
             isSupply: BALLOON_FIELD_DEFAULTS.isSupply,
-            taxonomyId: category.taxonomyId,
+            taxonomyId,
+            shopSectionId: slot.shopSectionId ? Number(slot.shopSectionId) : null,
             shippingProfileId: listing.shippingProfileId,
             readinessStateId: listing.readinessStateId,
             itemWeight: listing.itemWeight,
@@ -1273,14 +1359,14 @@ function ListingRevamp({
             itemWeightUnit: listing.itemWeightUnit,
             itemDimensionsUnit: listing.itemDimensionsUnit,
             images: [],
-            properties: buildBalloonProperties(category.taxonomyId),
+            properties: buildBalloonProperties(taxonomyId),
           }),
         })
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || 'Failed to create this draft.')
-        results.push({ category: category.fullPath, ok: true, listingId: data.listingId, url: data.url })
+        results.push({ label, ok: true, listingId: data.listingId, url: data.url })
       } catch (err) {
-        results.push({ category: category.fullPath, ok: false, error: err.message })
+        results.push({ label, ok: false, error: err.message })
       }
     }
     setBalloonDraftResults(results)
@@ -2078,48 +2164,98 @@ function ListingRevamp({
                       )
                     })()}
 
-                  {listing && !balloonCategorySet && /balloon/i.test(listing.title || '') && (
-                    <p className="subhead">
-                      This looks like a balloon listing, but the material (latex vs. foil/mylar)
-                      couldn't be determined from Etsy's materials field or the title/description
-                      — mention "latex" or "foil"/"mylar" in one of those to use category
-                      duplication below.
-                    </p>
-                  )}
-
-                  {listing && balloonCategorySet && (
+                  {listing && looksLikeBalloonListing && (
                     <div className="field balloon-category-drafts">
                       <p className="subhead">
-                        Creates one new draft per category below, using the title/tags/description
+                        Creates one new draft per variation below, using the title/tags/description
                         above (who made it / what is it set the same as Balloons on every one). No
                         images are attached; add distinct photos to each draft afterward.
                       </p>
-                      <ul>
-                        {balloonCategorySet.map((category) => (
-                          <li key={category.taxonomyId}>{category.fullPath}</li>
-                        ))}
-                      </ul>
-                      <button
-                        type="button"
-                        className="revamp-button"
-                        onClick={handleCreateBalloonCategoryDrafts}
-                        disabled={
-                          creatingBalloonDrafts ||
-                          !draftTitle.trim() ||
-                          draftTags.length === 0 ||
-                          !draftQuantity ||
-                          !draftPrice
-                        }
-                      >
-                        {creatingBalloonDrafts
-                          ? 'Creating category drafts…'
-                          : `Create ${balloonCategorySet.length} Balloon Category Drafts`}
-                      </button>
+
+                      <div className="field">
+                        <label htmlFor="variation-count">Number of variations (1-4)</label>
+                        <input
+                          id="variation-count"
+                          type="number"
+                          min="1"
+                          max={MAX_VARIATION_COUNT}
+                          step="1"
+                          value={variationCount}
+                          onChange={(event) => handleVariationCountChange(event.target.value)}
+                          placeholder="How many drafts?"
+                        />
+                        {variationCount !== '' && variationSlots.length === 0 && (
+                          <p className="error">Enter a whole number from 1 to {MAX_VARIATION_COUNT}.</p>
+                        )}
+                      </div>
+
+                      {shopSectionsError && <p className="error">{shopSectionsError}</p>}
+
+                      {variationSlots.map((slot, index) => (
+                        <div className="variation-slot" key={index}>
+                          <h3>Variation {index + 1}</h3>
+                          <div className="field">
+                            <label htmlFor={`variation-section-${index}`}>Shop Section</label>
+                            <select
+                              id={`variation-section-${index}`}
+                              value={slot.shopSectionId}
+                              onChange={(event) => handleSlotShopSectionChange(index, event.target.value)}
+                              disabled={loadingShopSections}
+                            >
+                              <option value="">No section</option>
+                              {shopSections.map((section) => (
+                                <option key={section.id} value={section.id}>
+                                  {section.title}
+                                </option>
+                              ))}
+                            </select>
+                            {loadingShopSections && (
+                              <p className="subhead">Loading your shop sections…</p>
+                            )}
+                          </div>
+                          <div className="field">
+                            <label htmlFor={`variation-category-${index}`}>Etsy Category</label>
+                            <select
+                              id={`variation-category-${index}`}
+                              value={slot.taxonomyId}
+                              onChange={(event) => handleSlotCategoryChange(index, event.target.value)}
+                            >
+                              <option value="">Select a category…</option>
+                              {MULTI_DRAFT_CATEGORIES.map((category) => (
+                                <option key={category.taxonomyId} value={category.taxonomyId}>
+                                  {category.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      ))}
+
+                      {variationSlots.length > 0 && (
+                        <button
+                          type="button"
+                          className="revamp-button"
+                          onClick={handleCreateBalloonCategoryDrafts}
+                          disabled={
+                            creatingBalloonDrafts ||
+                            !draftTitle.trim() ||
+                            draftTags.length === 0 ||
+                            !draftQuantity ||
+                            !draftPrice ||
+                            variationSlots.some((slot) => !slot.taxonomyId)
+                          }
+                        >
+                          {creatingBalloonDrafts
+                            ? 'Creating drafts…'
+                            : `Create ${variationSlots.length} Draft${variationSlots.length === 1 ? '' : 's'}`}
+                        </button>
+                      )}
+
                       {balloonDraftResults && (
                         <ul className="draft-image-errors">
                           {balloonDraftResults.map((result, index) => (
                             <li key={index} className={result.ok ? 'draft-success' : 'error'}>
-                              {result.category}:{' '}
+                              {result.label}:{' '}
                               {result.ok ? (
                                 <a href={result.url} target="_blank" rel="noreferrer">
                                   draft created

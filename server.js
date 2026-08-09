@@ -27,6 +27,7 @@ import { createDraftListingHandler } from './server/etsyListingDraft.js'
 import {
   createResolveSectionHandler,
   createRecordSectionProgressHandler,
+  createShopSectionsHandler,
 } from './server/etsySections.js'
 import { updateListingHandler } from './server/etsyListingUpdate.js'
 import { createEtsyTaxonomyHandler } from './server/etsyTaxonomy.js'
@@ -134,6 +135,7 @@ app.use('/api/load-competitor-listing', createLoadCompetitorListingHandler(env, 
 app.use('/api/create-draft-listing', createDraftListingHandler(env, passwordsMatch))
 app.use('/api/resolve-section', createResolveSectionHandler(env, passwordsMatch))
 app.use('/api/section-revamp-progress', createRecordSectionProgressHandler(env, passwordsMatch))
+app.use('/api/shop-sections', createShopSectionsHandler(env, passwordsMatch))
 app.use('/api/update-listing', updateListingHandler(env, passwordsMatch))
 app.use('/api/etsy-taxonomy', createEtsyTaxonomyHandler(env, passwordsMatch))
 app.use('/api/parse-listing-csv', createParseListingCsvHandler(env, passwordsMatch))

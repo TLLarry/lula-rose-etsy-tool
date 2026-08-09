@@ -19,18 +19,22 @@ import { getCategoryDefaults } from './categoryDefaults'
 
 const BALLOONS = {
   taxonomyId: 1333,
+  label: 'Balloons',
   fullPath: 'Paper & Party Supplies > Party Supplies > Party Decor > Balloons',
 }
 const BACKDROPS_PROPS = {
   taxonomyId: 1332,
+  label: 'Backdrops & Props',
   fullPath: 'Paper & Party Supplies > Party Supplies > Party Decor > Backdrops & Props',
 }
 const GARLANDS = {
   taxonomyId: 1339,
+  label: 'Garlands, Flags & Bunting',
   fullPath: 'Paper & Party Supplies > Party Supplies > Party Decor > Garlands, Flags & Bunting',
 }
 const PARTY_DECOR = {
   taxonomyId: 1331,
+  label: 'Party Decor',
   fullPath: 'Paper & Party Supplies > Party Supplies > Party Decor',
 }
 
@@ -38,6 +42,15 @@ const BALLOON_CATEGORY_SETS = {
   latex: [BALLOONS, GARLANDS, BACKDROPS_PROPS],
   foil_mylar: [BALLOONS, BACKDROPS_PROPS, PARTY_DECOR],
 }
+
+// The 3 real Etsy categories offered in the multi-variation draft
+// duplication feature (ListingRevamp's per-slot Category dropdown) —
+// deliberately a separate, fixed list from BALLOON_CATEGORY_SETS above
+// (which still only exists to build KNOWN_BALLOON_CATEGORY_IDS below,
+// gating unrelated Materials/Occasion/Holiday property autofill). Not
+// derived from material detection — every slot picks independently from
+// this same list regardless of latex vs. foil/mylar.
+const MULTI_DRAFT_CATEGORIES = [BALLOONS, BACKDROPS_PROPS, PARTY_DECOR]
 
 // Same who_made/is_supply this shop always wants on a Balloons listing
 // (see categoryDefaults.js) — reused here rather than re-declared, since
@@ -85,11 +98,6 @@ function detectBalloonMaterial({ materials, title, description }) {
   return detectFromMaterials(materials) ?? detectFromText(title, description)
 }
 
-// Returns the ordered category list for a detected material, or null.
-function getBalloonCategorySet(material) {
-  return BALLOON_CATEGORY_SETS[material] || null
-}
-
 // Every taxonomy_id this feature ever drafts into. Used to gate the
 // Materials/Occasion/Holiday property auto-fill (balloonAttributes.js)
 // to ONLY these 4 categories — their property_ids/value_ids were
@@ -107,8 +115,8 @@ function isKnownBalloonCategory(taxonomyId) {
 
 export {
   detectBalloonMaterial,
-  getBalloonCategorySet,
   isKnownBalloonCategory,
   BALLOON_FIELD_DEFAULTS,
   BALLOON_CATEGORY_SETS,
+  MULTI_DRAFT_CATEGORIES,
 }
