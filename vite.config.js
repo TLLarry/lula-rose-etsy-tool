@@ -63,6 +63,10 @@ import {
   createMarketResearchShopAnalysisHandler,
 } from './server/marketResearch.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
+import {
+  createThemeKeywordsHandler,
+  createThemePreviewHandler,
+} from './server/themeKeywordBank.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
 import {
   createShopReviewHandler,
@@ -118,6 +122,12 @@ function etsyTitleWriterPlugin(env) {
         createRecordSectionProgressHandler(env, passwordsMatch)
       )
       server.middlewares.use('/api/shop-sections', createShopSectionsHandler(env, passwordsMatch))
+      // Preview must be registered BEFORE the bare path — connect
+      // matches by prefix, so '/api/theme-keywords' would otherwise
+      // swallow '/api/theme-keywords/preview'. Same ordering trap as
+      // '/api/shop-review/pdf' below.
+      server.middlewares.use('/api/theme-keywords/preview', createThemePreviewHandler(env, passwordsMatch))
+      server.middlewares.use('/api/theme-keywords', createThemeKeywordsHandler(env, passwordsMatch))
       server.middlewares.use('/api/update-listing', updateListingHandler(env, passwordsMatch))
       server.middlewares.use(
         '/api/etsy-taxonomy',

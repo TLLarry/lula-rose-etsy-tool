@@ -34,6 +34,7 @@ import {
   validateImages,
 } from './listingApi.js'
 import { checkAppPassword, getKeywordBankForTaxonomy } from './db.js'
+import { selectThemeKeywords, buildThemeKeywordsParagraph } from './themeKeywords.js'
 
 // A keyword saved on just one listing isn't really "proven" in a
 // meaningful sense — it could be a one-off, listing-specific term.
@@ -174,12 +175,22 @@ function createRewriteListingHandler(env, passwordsMatch) {
       const images = validateImages(rawImages)
       const { categoryPath, keywords: provenKeywords } = selectProvenKeywords(taxonomyId)
 
+      // Tier 2 of the Keyword Bank — which holiday/season applies right
+      // now, decided from today's date plus whether the seller's own
+      // text names a theme (see server/themeKeywords.js). Matched
+      // against `description` only, NOT the CSV/competitor keywords
+      // folded into `keywords` above: a competitor's Halloween listing
+      // must not make THIS item a Halloween item.
+      const themeSelection = selectThemeKeywords(description)
+      const themeParagraph = buildThemeKeywordsParagraph(themeSelection)
+
       const title = await generateTitle(
         env.ANTHROPIC_API_KEY,
         description,
         keywords,
         images,
-        provenKeywords
+        provenKeywords,
+        themeParagraph
       )
       const extras = await generateListingExtras(
         env.ANTHROPIC_API_KEY,
@@ -188,7 +199,8 @@ function createRewriteListingHandler(env, passwordsMatch) {
         title,
         images,
         {},
-        provenKeywords
+        provenKeywords,
+        themeParagraph
       )
 
       res.end(
@@ -215,6 +227,14 @@ function createRewriteListingHandler(env, passwordsMatch) {
           // either no taxonomyId was sent or that category has no saved
           // bank yet, not an error.
           keywordBank: { categoryPath, provenKeywordsUsed: provenKeywords.length },
+          // Which theme bank drove this rewrite and why, so the seller
+          // can see the date-based decision rather than guessing at it.
+          themeBank: {
+            date: themeSelection.monthDay,
+            holiday: themeSelection.holiday?.label ?? null,
+            season: themeSelection.season?.label ?? null,
+            reason: themeSelection.reason,
+          },
         })
       )
     } catch (err) {

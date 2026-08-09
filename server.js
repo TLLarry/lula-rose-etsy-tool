@@ -66,6 +66,10 @@ import {
   createMarketResearchShopAnalysisHandler,
 } from './server/marketResearch.js'
 import { createKeywordBankScanHandler } from './server/keywordBankScan.js'
+import {
+  createThemeKeywordsHandler,
+  createThemePreviewHandler,
+} from './server/themeKeywordBank.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
 import {
   createShopReviewHandler,
@@ -136,6 +140,10 @@ app.use('/api/create-draft-listing', createDraftListingHandler(env, passwordsMat
 app.use('/api/resolve-section', createResolveSectionHandler(env, passwordsMatch))
 app.use('/api/section-revamp-progress', createRecordSectionProgressHandler(env, passwordsMatch))
 app.use('/api/shop-sections', createShopSectionsHandler(env, passwordsMatch))
+// Preview before the bare path — express matches by prefix too, so the
+// order here matters for the same reason it does in vite.config.js.
+app.use('/api/theme-keywords/preview', createThemePreviewHandler(env, passwordsMatch))
+app.use('/api/theme-keywords', createThemeKeywordsHandler(env, passwordsMatch))
 app.use('/api/update-listing', updateListingHandler(env, passwordsMatch))
 app.use('/api/etsy-taxonomy', createEtsyTaxonomyHandler(env, passwordsMatch))
 app.use('/api/parse-listing-csv', createParseListingCsvHandler(env, passwordsMatch))

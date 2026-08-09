@@ -90,6 +90,8 @@ const TABLE_NAMES = [
   'app_settings',
   'keyword_bank_categories',
   'keyword_bank_keywords',
+  'keyword_theme_banks',
+  'keyword_theme_keywords',
   'section_revamp_progress',
 ]
 
@@ -367,6 +369,69 @@ function initializeSchema(realDbInstance) {
   );
 
   CREATE INDEX IF NOT EXISTS idx_keyword_bank_keywords_category ON keyword_bank_keywords(category_id);
+
+  -- Theme keyword banks: the SECOND tier of the keyword bank, sitting
+  -- alongside keyword_bank_categories above rather than replacing it.
+  -- That first tier answers "what words work in this Etsy CATEGORY"
+  -- (mined from the shop's own listings); this one answers "what words
+  -- work at this TIME OF YEAR" (seeded editorially, since a brand-new
+  -- holiday has no listing history to mine).
+  --
+  -- kind is 'holiday' (a dated event — Halloween, Christmas, ...) or
+  -- 'season' (the everyday fallback — spring/summer/fall/winter).
+  --
+  -- window_start/window_end are 'MM-DD' with NO year, deliberately:
+  --   - Shoppers buy weeks ahead, so the SELLING window is what matters,
+  --     not the calendar day. Halloween's window opens Sept 1.
+  --   - Thanksgiving, Mother's Day and Father's Day float (4th Thursday,
+  --     2nd Sunday, 3rd Sunday) so no fixed date would be correct — but
+  --     their windows are stable year to year.
+  -- A window where window_end sorts BEFORE window_start wraps the year
+  -- end (Christmas 11-01 -> 12-26 does not; New Year's 12-26 -> 01-05
+  -- and winter 12-01 -> 02-28 do). See isWithinWindow in
+  -- server/themeKeywords.js for the wrap-aware comparison.
+  --
+  -- peak is the approximate real date, used ONLY to rank two open
+  -- windows against each other (in mid-December, Christmas outranks
+  -- New Year's because its peak is nearer). NULL for seasons.
+  CREATE TABLE IF NOT EXISTS keyword_theme_banks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL CHECK (kind IN ('holiday', 'season')),
+    slug TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    window_start TEXT NOT NULL,
+    window_end TEXT NOT NULL,
+    peak TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- keyword COLLATE NOCASE for the same reason keyword_bank_keywords
+  -- uses it: "Spooky Balloon" and "spooky balloon" must not both exist
+  -- inside one bank.
+  --
+  -- tag_safe is precomputed rather than derived at read time because
+  -- the two consumers have different limits: a keyword over Etsy's
+  -- 20-character tag cap is still perfectly usable in a TITLE or
+  -- description, it just can't be a tag. The tag builder filters on
+  -- this column; the title builder ignores it.
+  --
+  -- weight is editorial strength (3 = core term you'd expect on almost
+  -- any listing for this theme, 1 = useful long-tail), used for
+  -- ordering so the strongest terms survive the prompt-size cap.
+  CREATE TABLE IF NOT EXISTS keyword_theme_keywords (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bank_id INTEGER NOT NULL REFERENCES keyword_theme_banks(id) ON DELETE CASCADE,
+    keyword TEXT NOT NULL COLLATE NOCASE,
+    weight INTEGER NOT NULL DEFAULT 1,
+    tag_safe INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'seed',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(bank_id, keyword)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_keyword_theme_keywords_bank ON keyword_theme_keywords(bank_id);
 
   -- Listing Revamp's "revamp an entire section" batch feature — one row
   -- per source listing once it's been processed (successfully or not),
@@ -1196,6 +1261,86 @@ function getKeywordBankForTaxonomy(taxonomyId) {
   }
 }
 
+// --- keyword_theme_banks / keyword_theme_keywords ---
+
+// Etsy's hard tag cap. A keyword longer than this can still be used in a
+// title or description, so it's stored either way and only flagged.
+const THEME_TAG_MAX_LENGTH = 20
+
+// Multi-word AND within the tag cap — both conditions the listing
+// prompt already enforces on generated tags (see LISTING_EXTRAS_SYSTEM_
+// PROMPT in server/listingApi.js), applied here so a seeded keyword is
+// never offered as a tag candidate it would fail on.
+function isTagSafeKeyword(keyword) {
+  return keyword.length <= THEME_TAG_MAX_LENGTH && keyword.trim().includes(' ')
+}
+
+// Upserts one bank and its keywords together. Re-seeding is idempotent:
+// running it twice leaves exactly one row per keyword (UNIQUE(bank_id,
+// keyword) + ON CONFLICT), so this doubles as the migration path when
+// the seed list is edited later.
+function saveThemeBank({ kind, slug, label, windowStart, windowEnd, peak, keywords }) {
+  const run = db.transaction(() => {
+    db.prepare(
+    `INSERT INTO keyword_theme_banks (kind, slug, label, window_start, window_end, peak)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(slug) DO UPDATE SET
+       kind = excluded.kind,
+       label = excluded.label,
+       window_start = excluded.window_start,
+       window_end = excluded.window_end,
+       peak = excluded.peak,
+       updated_at = datetime('now')`
+  ).run(kind, slug, label, windowStart, windowEnd, peak ?? null)
+
+  const bank = db.prepare(`SELECT id FROM keyword_theme_banks WHERE slug = ?`).get(slug)
+  const insert = db.prepare(
+    `INSERT INTO keyword_theme_keywords (bank_id, keyword, weight, tag_safe, source)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(bank_id, keyword) DO UPDATE SET
+       weight = excluded.weight,
+       tag_safe = excluded.tag_safe,
+       source = excluded.source,
+       updated_at = datetime('now')`
+  )
+    for (const entry of keywords) {
+      const keyword = entry.keyword.trim()
+      if (!keyword) continue
+      insert.run(bank.id, keyword, entry.weight ?? 1, isTagSafeKeyword(keyword) ? 1 : 0, entry.source ?? 'seed')
+    }
+    return bank.id
+  })
+  return run()
+}
+
+function getThemeBanks() {
+  const banks = db
+    .prepare(`SELECT id, kind, slug, label, window_start, window_end, peak FROM keyword_theme_banks ORDER BY kind, slug`)
+    .all()
+  const keywords = db
+    .prepare(
+      `SELECT bank_id, keyword, weight, tag_safe FROM keyword_theme_keywords
+       ORDER BY weight DESC, keyword ASC`
+    )
+    .all()
+  return banks.map((bank) => ({
+    id: bank.id,
+    kind: bank.kind,
+    slug: bank.slug,
+    label: bank.label,
+    windowStart: bank.window_start,
+    windowEnd: bank.window_end,
+    peak: bank.peak,
+    keywords: keywords
+      .filter((k) => k.bank_id === bank.id)
+      .map((k) => ({ keyword: k.keyword, weight: k.weight, tagSafe: k.tag_safe === 1 })),
+  }))
+}
+
+function getThemeBankBySlug(slug) {
+  return getThemeBanks().find((bank) => bank.slug === slug) || null
+}
+
 // Only 'done' listings are treated as already handled — a 'failed' one
 // stays eligible so re-running the section retries it, rather than
 // permanently skipping a listing that never actually got a draft.
@@ -1614,6 +1759,9 @@ export {
   getKeywordBankForTaxonomy,
   addKeywordBankKeyword,
   removeKeywordBankKeyword,
+  saveThemeBank,
+  getThemeBanks,
+  getThemeBankBySlug,
   getSectionRevampDoneListingIds,
   getSectionRevampProgress,
   recordSectionRevampResult,

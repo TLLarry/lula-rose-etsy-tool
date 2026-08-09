@@ -9,6 +9,9 @@ import Anthropic from '@anthropic-ai/sdk'
 import crypto from 'node:crypto'
 import { CATEGORIES } from '../src/categories.js'
 import { decodeHtmlEntities } from './htmlEntities.js'
+// Safe import direction: themeKeywords.js -> db.js, and db.js imports
+// nothing from this module, so there is no cycle.
+import { selectThemeKeywords, buildThemeKeywordsParagraph } from './themeKeywords.js'
 
 const ALLOWED_IMAGE_MEDIA_TYPES = ['image/jpeg', 'image/png']
 const MAX_IMAGES = 20
@@ -225,6 +228,7 @@ Follow these locked rules exactly:
 2. Separate distinct keyword phrases with a comma and a space (", "). Never use the "|" pipe character anywhere in the title.
 3. The title MUST be between 135 and 140 characters, inclusive, including spaces and commas. This is a hard requirement, not a rough target — a title under 135 characters is NEVER acceptable, and a title over 140 characters is NEVER acceptable. Count the characters as you write and keep adding genuine, distinct descriptive phrases until the total lands in that exact 135-140 range.
 4. Do not keyword-stuff. Per Etsy's 2026 SEO guidance, each phrase must read naturally and describe a real attribute, use, or audience for the item — do not repeat the same word across multiple phrases. Reach the required length with additional genuine, distinct descriptive phrases, not by padding or repetition.
+5. NEVER generalize a specific theme into a generic one. If the item is a crocodile, say crocodile — do not downgrade it to "animal" or "party decor". If it is Halloween, say Halloween — do not soften it to "holiday". Specific beats broad every time: a shopper searching the exact theme must find this listing, and generic phrases compete with millions of others. This applies even when a suggested keyword is generic — a suggestion never overrides this rule. Only widen a phrase when the specific term would push the title out of the 135-140 range and there is no other phrase to cut.
 
 Respond with ONLY the title text. No quotation marks, no markdown, no explanation, no trailing period.`
 
@@ -239,7 +243,12 @@ function buildProvenKeywordsParagraph(provenKeywords) {
   return `Proven category keywords: ${provenKeywords.join(', ')} (already used successfully across other listings in this exact same Etsy category — prefer selecting from these for tags whenever one is a genuine, relevant fit for THIS listing; only invent a new tag when none of these apply, or once you've used all the relevant ones and still need more to reach the required count)`
 }
 
-function buildTitleTextPrompt(description, keywords, hasImages, provenKeywords = []) {
+// themeParagraph is the seasonal/holiday block from
+// server/themeKeywords.js (buildThemeKeywordsParagraph) — already fully
+// rendered, including which bank leads, so this only has to place it.
+// Callers with no theme banks (the main Listing Tool) pass nothing and
+// the prompt is byte-identical to before this feature existed.
+function buildTitleTextPrompt(description, keywords, hasImages, provenKeywords = [], themeParagraph = null) {
   const parts = []
   const hasDescription = Boolean(description && description.trim())
 
@@ -256,19 +265,21 @@ function buildTitleTextPrompt(description, keywords, hasImages, provenKeywords =
   }
   const provenParagraph = buildProvenKeywordsParagraph(provenKeywords)
   if (provenParagraph) parts.push(provenParagraph)
+  if (themeParagraph) parts.push(themeParagraph)
   if (parts.length === 0) {
     parts.push('Use only the attached photo(s) to write the title.')
   }
   return parts.join('\n\n')
 }
 
-function buildTitleContent(description, keywords, images, provenKeywords = []) {
+function buildTitleContent(description, keywords, images, provenKeywords = [], themeParagraph = null) {
   const imageBlocks = buildImageContentBlocks(images)
   const textPrompt = buildTitleTextPrompt(
     description,
     keywords,
     imageBlocks.length > 0,
-    provenKeywords
+    provenKeywords,
+    themeParagraph
   )
   return [...imageBlocks, { type: 'text', text: textPrompt }]
 }
@@ -386,10 +397,10 @@ function reconcileTags(tags) {
 // conversation accumulates every past attempt (rather than starting fresh
 // each round) so the model can see what it already tried and how far off
 // each one was, instead of repeating the same miss.
-async function retryTitleLength(apiKey, description, keywords, images, title, provenKeywords = []) {
+async function retryTitleLength(apiKey, description, keywords, images, title, provenKeywords = [], themeParagraph = null) {
   const client = new Anthropic({ apiKey })
   const conversation = [
-    { role: 'user', content: buildTitleContent(description, keywords, images, provenKeywords) },
+    { role: 'user', content: buildTitleContent(description, keywords, images, provenKeywords, themeParagraph) },
   ]
   let current = title
   let attempts = 0
@@ -421,7 +432,7 @@ async function retryTitleLength(apiKey, description, keywords, images, title, pr
   return current
 }
 
-async function generateTitle(apiKey, description, keywords, images, provenKeywords = []) {
+async function generateTitle(apiKey, description, keywords, images, provenKeywords = [], themeParagraph = null) {
   if (!apiKey) {
     throw new Error(
       'ANTHROPIC_API_KEY is not set. Copy .env.example to .env and fill it in.'
@@ -435,7 +446,7 @@ async function generateTitle(apiKey, description, keywords, images, provenKeywor
     output_config: { effort: 'medium' },
     system: TITLE_RULES_SYSTEM_PROMPT,
     messages: [
-      { role: 'user', content: buildTitleContent(description, keywords, images, provenKeywords) },
+      { role: 'user', content: buildTitleContent(description, keywords, images, provenKeywords, themeParagraph) },
     ],
   })
 
@@ -453,7 +464,7 @@ async function generateTitle(apiKey, description, keywords, images, provenKeywor
   // after MAX_LENGTH_RETRY_ATTEMPTS attempts, the title is returned as-is
   // and the frontend flags it in red rather than looping indefinitely.
   if (title.length < MIN_TITLE_LENGTH) {
-    title = await retryTitleLength(apiKey, description, keywords, images, title, provenKeywords)
+    title = await retryTitleLength(apiKey, description, keywords, images, title, provenKeywords, themeParagraph)
   }
 
   return title
@@ -475,6 +486,7 @@ TAGS (array of exactly 13 strings):
 - Every tag must be 20 characters or fewer, counting spaces. This is a hard limit. If a natural phrase runs long, shorten it while keeping at least two words — never truncate mid-word.
 - All 13 tags must be unique from each other — no duplicates, no near-duplicates.
 - Do not repeat exact phrases already present in the title you were given. Instead, expand on it: cover synonyms, buyer-intent phrases (e.g. "gift for mom"), occasion keywords (e.g. "birthday gift", "holiday gift"), style terms, audience terms, and long-tail search variations the title does not cover.
+- NEVER generalize a specific theme into a generic one. A jungle item keeps "jungle"; it must not become "birthday party". A Halloween item keeps "Halloween"; it must not become "holiday decor". Generic tags compete with millions of listings and win none of them, so a broad tag is worth less than a narrow one even when the broad one has more search volume. If you are offered a suggested keyword that is more generic than the item itself, DO NOT USE IT — a suggestion never outranks this rule. Prefer the item's own specific theme, material, character, colour, and occasion.
 
 HEADER (string):
 - Exactly one complete, natural-reading sentence built around the listing's primary keyword — the same keyword that is front-loaded in the title.
@@ -605,7 +617,7 @@ const EMPTY_SPECS = {
   howToOrder: '',
 }
 
-function buildExtrasTextPrompt(description, keywords, title, hasImages, facts, provenKeywords = []) {
+function buildExtrasTextPrompt(description, keywords, title, hasImages, facts, provenKeywords = [], themeParagraph = null) {
   const parts = [`Etsy title already generated for this listing: ${title}`]
 
   const factsBlock = buildSellerFactsBlock(facts)
@@ -628,10 +640,11 @@ function buildExtrasTextPrompt(description, keywords, title, hasImages, facts, p
   }
   const provenParagraph = buildProvenKeywordsParagraph(provenKeywords)
   if (provenParagraph) parts.push(provenParagraph)
+  if (themeParagraph) parts.push(themeParagraph)
   return parts.join('\n\n')
 }
 
-function buildExtrasContent(description, keywords, title, images, facts, provenKeywords = []) {
+function buildExtrasContent(description, keywords, title, images, facts, provenKeywords = [], themeParagraph = null) {
   const imageBlocks = buildLabeledImageContentBlocks(images)
   const textPrompt = buildExtrasTextPrompt(
     description,
@@ -639,7 +652,8 @@ function buildExtrasContent(description, keywords, title, images, facts, provenK
     title,
     images.length > 0,
     facts,
-    provenKeywords
+    provenKeywords,
+    themeParagraph
   )
   return [...imageBlocks, { type: 'text', text: textPrompt }]
 }
@@ -778,7 +792,8 @@ async function generateListingExtras(
   title,
   images,
   facts,
-  provenKeywords = []
+  provenKeywords = [],
+  themeParagraph = null
 ) {
   const client = new Anthropic({ apiKey })
   const response = await client.messages.create({
@@ -792,7 +807,7 @@ async function generateListingExtras(
     messages: [
       {
         role: 'user',
-        content: buildExtrasContent(description, keywords, title, images, facts, provenKeywords),
+        content: buildExtrasContent(description, keywords, title, images, facts, provenKeywords, themeParagraph),
       },
     ],
   })
@@ -1452,15 +1467,30 @@ function createGenerateTitleHandler(env) {
       }
 
       if (categories.length === 0) {
-        // Unchanged from before category variants existed.
-        const title = await generateTitle(env.ANTHROPIC_API_KEY, description, keywords, images)
+        // Theme keyword banks (tier 2) — this is the photo + short
+        // description flow, so the date decides the season and the
+        // seller's own text decides whether a holiday applies. Matched
+        // against `description` only, not `keywords`: a keyword the
+        // seller pasted in from research shouldn't retheme the item.
+        const themeSelection = selectThemeKeywords(description)
+        const themeParagraph = buildThemeKeywordsParagraph(themeSelection)
+        const title = await generateTitle(
+          env.ANTHROPIC_API_KEY,
+          description,
+          keywords,
+          images,
+          [],
+          themeParagraph
+        )
         const extras = await generateListingExtras(
           env.ANTHROPIC_API_KEY,
           description,
           keywords,
           title,
           images,
-          facts
+          facts,
+          [],
+          themeParagraph
         )
         res.end(
           JSON.stringify({
@@ -1474,6 +1504,14 @@ function createGenerateTitleHandler(env) {
             // Omitted entirely (not even an empty array) when no images
             // were uploaded, regardless of what the model returned.
             ...(images.length > 0 ? { altText: extras.altText } : {}),
+            // Which theme bank drove this and why — surfaced so the
+            // date-based choice is visible instead of invisible.
+            themeBank: {
+              date: themeSelection.monthDay,
+              holiday: themeSelection.holiday?.label ?? null,
+              season: themeSelection.season?.label ?? null,
+              reason: themeSelection.reason,
+            },
           })
         )
         return
