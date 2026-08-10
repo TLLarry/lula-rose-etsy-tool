@@ -16,6 +16,11 @@ function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
   const [reviewLoading, setReviewLoading] = useState(false)
   const [reviewError, setReviewError] = useState('')
 
+  // "Rewrite My Etsy Drafts" — the single manual draft entry point.
+  const [rewritingDrafts, setRewritingDrafts] = useState(false)
+  const [draftsRun, setDraftsRun] = useState(null)
+  const [draftsRunError, setDraftsRunError] = useState('')
+
   const [tasks, setTasks] = useState([])
   const [tasksLoading, setTasksLoading] = useState(true)
   const [tasksError, setTasksError] = useState('')
@@ -300,6 +305,30 @@ function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
     }
   }
 
+  // The one manual draft-rewrite action. No confirm step: it only ever
+  // edits drafts (never a live listing) and never publishes, so the
+  // worst case is a draft that needs re-running — and the seller sees
+  // the result in Etsy before anything goes live either way.
+  const handleRewriteAllDrafts = async () => {
+    setRewritingDrafts(true)
+    setDraftsRunError('')
+    setDraftsRun(null)
+    try {
+      const response = await fetch('/api/rewrite-all-drafts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
+        body: JSON.stringify({}),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to rewrite your drafts.')
+      setDraftsRun(data)
+    } catch (err) {
+      setDraftsRunError(err.message)
+    } finally {
+      setRewritingDrafts(false)
+    }
+  }
+
   return (
     <section id="dashboard-page">
       <div className="dashboard-shop-header">
@@ -316,6 +345,78 @@ function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
 
       <h1>Welcome back</h1>
       <p className="subhead">Here's your shop at a glance.</p>
+
+      {/* The single manual entry point for rewriting Etsy drafts. Writes
+          the result back to the draft and stops there — nothing is ever
+          published, so the seller reviews in Etsy before going live. */}
+      <div className="dashboard-performers-box">
+        <h2>Rewrite My Etsy Drafts</h2>
+        <p className="subhead">
+          Writes a new title, description and 13 tags for every draft sitting in your Etsy shop,
+          using your photos and whatever you typed in the description. Your typed text is kept
+          exactly as-is. Price, category, section, shipping and photos are never touched, and
+          nothing is published — each draft stays a draft for you to review.
+        </p>
+        <button
+          type="button"
+          className="revamp-button"
+          onClick={handleRewriteAllDrafts}
+          disabled={rewritingDrafts}
+        >
+          {rewritingDrafts ? 'Rewriting your drafts…' : 'Rewrite My Etsy Drafts'}
+        </button>
+        {rewritingDrafts && (
+          <p className="subhead">
+            This takes about half a minute per draft — it reads each one's photos and writes the
+            listing. Leave this page open.
+          </p>
+        )}
+        {draftsRunError && <p className="error">{draftsRunError}</p>}
+        {draftsRun && (
+          <div className="dashboard-drafts-result">
+            <p className="subhead">
+              {draftsRun.processed === 0
+                ? 'No drafts found in your Etsy shop — nothing to do.'
+                : `Rewrote ${draftsRun.succeeded} of ${draftsRun.processed} draft${draftsRun.processed === 1 ? '' : 's'}.` +
+                  (draftsRun.failed > 0 ? ` ${draftsRun.failed} failed.` : '') +
+                  (draftsRun.remaining > 0
+                    ? ` ${draftsRun.remaining} more still waiting — press the button again to continue.`
+                    : '')}
+            </p>
+            <ul>
+              {draftsRun.results.map((result) => (
+                <li key={result.listingId} className={result.ok ? 'draft-success' : 'error'}>
+                  {result.ok ? (
+                    <>
+                      <a
+                        href={`https://www.etsy.com/your/shops/me/tools/listings/${result.listingId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {result.title}
+                      </a>
+                      <span className="subhead">
+                        {' '}
+                        — {result.tagCount} tags, {result.photosUsed} photo
+                        {result.photosUsed === 1 ? '' : 's'} read
+                        {result.themeBank?.holiday
+                          ? `, ${result.themeBank.holiday} keywords`
+                          : result.themeBank?.season
+                            ? `, ${result.themeBank.season} keywords`
+                            : ''}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      {result.previousTitle}: {result.error}
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
 
       <div className="dashboard-performers-box dashboard-tasks-hero">
         <h2>This Week</h2>

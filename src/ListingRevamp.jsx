@@ -2,12 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MAX_IMAGES, ALLOWED_IMAGE_TYPES, readFileAsDataUrl, validateImageFiles } from './imageUpload.js'
 import TaxonomyPicker from './TaxonomyPicker'
 import { getCategoryDefaults } from './categoryDefaults'
-import {
-  detectBalloonMaterial,
-  isKnownBalloonCategory,
-  BALLOON_FIELD_DEFAULTS,
-  MULTI_DRAFT_CATEGORIES,
-} from './balloonCategories'
+import { detectBalloonMaterial, isKnownBalloonCategory } from './balloonCategories'
 import {
   OCCASION_PROPERTY_ID,
   HOLIDAY_PROPERTY_ID,
@@ -24,10 +19,6 @@ const MAX_TAG_LENGTH = 20
 const MIN_HEADER_LENGTH = 150
 const MAX_HEADER_LENGTH = 155
 const MAX_ALT_TEXT_LENGTH = 125
-// Pause takes effect after the current CLUSTER finishes (not mid-
-// listing) — this is the cluster size that boundary is checked against.
-const SECTION_CLUSTER_SIZE = 10
-const MAX_VARIATION_COUNT = 4
 
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
@@ -135,39 +126,10 @@ function ListingRevamp({
   const [combiningBoth, setCombiningBoth] = useState(false)
 
   // "Your Etsy Listing Link" also accepts a section link/name instead of
-  // a single listing — resolved server-side (server/etsySections.js)
-  // against this shop's REAL sections, never guessed client-side beyond
-  // "does this look like a listing link." sectionInfo holds the
-  // resolved section + its full listing id list + whichever of those
-  // are already done from a previous (possibly interrupted) run.
-  // sectionResults is the LIVE per-listing outcome list as the batch
-  // runs, seeded from sectionInfo.doneListingIds so already-done ones
-  // show immediately without waiting for the batch to reach them.
-  const [sectionInfo, setSectionInfo] = useState(null)
-  const [sectionResults, setSectionResults] = useState([])
-  const [processingSection, setProcessingSection] = useState(false)
-  const [sectionError, setSectionError] = useState('')
-  // Record-player controls for the batch loop below. null means "never
-  // paused/stopped" (either hasn't run yet, or ran to completion) —
-  // distinct from 'paused'/'stopped' so the UI can say WHY it isn't
-  // running right now, even though resuming works identically either
-  // way (same processed/not-processed tracking).
-  //
-  // BOTH a ref AND a state variable exist for pause/stop, on purpose,
-  // for two different readers: the loop (an already-running async
-  // function) reads the REF — a plain state variable captured in its
-  // closure at start time would never see a later setState, so the ref
-  // is the only way the loop can observe a click that happens WHILE
-  // it's mid-flight. The BUTTON's own rendered appearance reads the
-  // STATE — mutating only the ref (as an earlier version of this code
-  // did) never triggers a re-render, so the click was structurally
-  // invisible no matter how long you waited. Every place that sets one
-  // sets both, together, in the same statement.
-  const [sectionStopReason, setSectionStopReason] = useState(null)
-  const [pauseRequested, setPauseRequested] = useState(false)
-  const [stopRequested, setStopRequested] = useState(false)
-  const pauseRequestedRef = useRef(false)
-  const stopRequestedRef = useRef(false)
+  // Section batch state removed along with its Play/Pause/Stop controls.
+  // Creating drafts now has exactly one entry point: "Rewrite My Etsy
+  // Drafts" on the Dashboard.
+
 
   const [csvFile, setCsvFile] = useState(null)
   const [parsingCsv, setParsingCsv] = useState(false)
@@ -223,32 +185,13 @@ function ListingRevamp({
   const [draftHolidayGuessed, setDraftHolidayGuessed] = useState(false)
   const [draftTaxonomyId, setDraftTaxonomyId] = useState(null)
   const [draftTaxonomyLabel, setDraftTaxonomyLabel] = useState('')
-  const [creatingDraft, setCreatingDraft] = useState(false)
+  // Nothing renders this any more (the manual "Draft" button is gone),
+  // but handleCreateDraft still sets it and the Dashboard's "Revamp
+  // Now" task still calls that function — kept so the flag stays
+  // meaningful if a caller ever needs to show progress again.
+  const [, setCreatingDraft] = useState(false)
   const [draftCreateResult, setDraftCreateResult] = useState(null)
   const [draftCreateError, setDraftCreateError] = useState('')
-  // Balloons multi-variation draft duplication (see balloonCategories.js)
-  // — the seller types how many drafts to create (1-4, never defaulted)
-  // and picks a Shop Section + Etsy Category independently for each one.
-  // variationCount is the raw text field value (kept as a string so an
-  // empty/invalid field is distinguishable from a real 0); variationSlots
-  // is only ever resized to match a currently-VALID count, so it's the
-  // thing everything else (rendering the slot rows, the submit button)
-  // actually reads. Results are per-slot so a partial failure (e.g. one
-  // category rejected) doesn't hide which drafts DID succeed.
-  const [variationCount, setVariationCount] = useState('')
-  const [variationSlots, setVariationSlots] = useState([])
-  const [creatingBalloonDrafts, setCreatingBalloonDrafts] = useState(false)
-  const [balloonDraftResults, setBalloonDraftResults] = useState(null)
-
-  // Shop sections — fetched live from Etsy (never hardcoded) the first
-  // time this feature becomes relevant, then cached for the rest of the
-  // session (sections don't change fast enough to need re-fetching on
-  // every listing load). shopSectionsFetchedRef guards against re-fetching
-  // on every render once loaded/attempted.
-  const [shopSections, setShopSections] = useState([])
-  const [loadingShopSections, setLoadingShopSections] = useState(false)
-  const [shopSectionsError, setShopSectionsError] = useState('')
-  const shopSectionsFetchedRef = useRef(false)
   const [updatingListing, setUpdatingListing] = useState(false)
   const [updateListingResult, setUpdateListingResult] = useState(null)
   const [updateListingError, setUpdateListingError] = useState('')
@@ -324,325 +267,22 @@ function ListingRevamp({
   // deliberately, not re-derived differently client-side.
   const LISTING_URL_PATTERN = /etsy\.com\/(?:[a-z]{2,3}\/)?listing\/(\d+)/i
 
-  // Dispatches "Your Etsy Listing Link" to the right flow automatically
-  // — a single listing link behaves exactly as it always has
-  // (handleLoadListing, untouched); anything else (a section link, or a
-  // bare section name/title) is resolved as a SECTION instead
-  // (handleResolveSection below). The seller never has to say which one
-  // they pasted.
+  // Listing links only. This used to also accept a section link/name
+  // and hand it to a batch runner that drafted every listing in the
+  // section unattended; that runner was removed along with its
+  // Play/Pause/Stop controls, because creating drafts now has exactly
+  // one entry point — "Rewrite My Etsy Drafts" on the Dashboard.
   const handleLoadListingOrSection = async () => {
-    // Stops any section batch that's still actively running in the
-    // background before switching away from it — otherwise it would
-    // keep silently creating real drafts for the OLD section even
-    // after its own UI has disappeared (sectionInfo about to be reset).
-    stopRequestedRef.current = true
-    pauseRequestedRef.current = true
     const input = listingUrl.trim()
-    if (LISTING_URL_PATTERN.test(input)) {
-      setSectionInfo(null)
-      setSectionResults([])
-      setSectionError('')
-      setSectionStopReason(null)
-      setPauseRequested(false)
-      setStopRequested(false)
-      await handleLoadListing()
-      return
-    }
-    await handleResolveSection(input)
-  }
-
-  // Resolves a section link/name against this shop's real sections
-  // (server/etsySections.js — never guessed) and fetches its full
-  // active-listing id list, plus whichever of those already have a
-  // draft from a previous (possibly interrupted) run. Only PREVIEWS the
-  // section — actually creating drafts is a separate, explicit action
-  // (handleRevampSection), same "load/preview first, write only on a
-  // deliberate second click" shape as the single-listing flow.
-  const handleResolveSection = async (input) => {
-    setLoading(true)
-    setError('')
-    setListing(null)
-    setSectionError('')
-    setSectionInfo(null)
-    setSectionResults([])
-    setSectionStopReason(null)
-    setPauseRequested(false)
-    setStopRequested(false)
-    try {
-      const response = await fetch('/api/resolve-section', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-        body: JSON.stringify({ input }),
-      })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || "Couldn't find that listing or section.")
-      setSectionInfo(data)
-      // Seeded from a previous run's progress so already-done listings
-      // show immediately, without waiting for the batch loop to reach
-      // them (it never will — they're skipped).
-      setSectionResults(
-        data.doneListingIds.map((id) => ({ sourceListingId: id, ok: true, alreadyDone: true }))
+    if (!LISTING_URL_PATTERN.test(input)) {
+      setError(
+        "That doesn't look like an Etsy listing link. Paste the full link to a single listing, e.g. https://www.etsy.com/listing/1234567890/"
       )
-    } catch (err) {
-      setSectionError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // Called by the initial "Revamp Entire Section" click AND by the
-  // Pause/Resume toggle's own "actually restart" branch below —
-  // recomputes what's still remaining from the LIVE sectionResults each
-  // time, not the one-time snapshot from /api/resolve-section, so a
-  // resume within the same session correctly skips whatever THIS
-  // session already finished (not just what was done before the
-  // section was first loaded).
-  const handlePlaySection = () => {
-    if (!sectionInfo || processingSection) return
-    pauseRequestedRef.current = false
-    stopRequestedRef.current = false
-    setPauseRequested(false)
-    setStopRequested(false)
-    setSectionStopReason(null)
-    handleRevampSection()
-  }
-
-  // ONE toggle button, two states — Pause (unhighlighted) and Resume
-  // (highlighted), per the exact spec: clicking it flips the visible
-  // state IMMEDIATELY (setPauseRequested, real React state — the ref
-  // alone was the bug: mutating a ref never triggers a re-render, so a
-  // previous version of this button could never visibly change no
-  // matter how long you waited). Three cases:
-  //  - Not paused/requested yet -> request a pause. The loop (which
-  //    reads the REF) only actually stops at the next cluster boundary,
-  //    but the button itself flips to "Resume"/highlighted right now,
-  //    matching "the moment I click Pause" in the spec, not "the moment
-  //    the cluster finishes."
-  //  - Paused/requested, loop still finishing out the cluster
-  //    (processingSection still true) -> clicking again CANCELS the
-  //    pending request; the loop just keeps going, nothing to restart.
-  //  - Paused/requested, loop has actually stopped (processingSection
-  //    false) -> clicking again actually restarts it via
-  //    handlePlaySection.
-  const handleTogglePauseSection = () => {
-    if (!pauseRequested) {
-      pauseRequestedRef.current = true
-      setPauseRequested(true)
       return
     }
-    pauseRequestedRef.current = false
-    setPauseRequested(false)
-    if (!processingSection) {
-      handlePlaySection()
-    }
+    await handleLoadListing()
   }
 
-  // Sets a flag the running loop checks after the CURRENT LISTING
-  // finishes (sooner than Pause's cluster boundary) — still never mid-
-  // listing, since abandoning a listing between its draft being created
-  // and its progress being recorded would leave an untracked draft that
-  // a later run could duplicate. Whatever's already been created as a
-  // draft stays exactly as it is; this only stops further processing.
-  // setStopRequested (real state, not just the ref) is what makes the
-  // button visibly react the instant it's clicked, same fix as Pause
-  // above — the loop itself still finishes the current listing before
-  // actually stopping, but the button shouldn't wait for that to show
-  // the click registered.
-  //
-  // Two cases: the loop is actively running (normal case — flag it,
-  // the loop notices at its next per-listing checkpoint and updates
-  // state itself), or the run is already PAUSED with no loop currently
-  // executing at all (pauseRequested true, processingSection false) —
-  // there's nothing for a flag to be noticed BY, so this transitions
-  // straight to 'stopped' itself instead of setting a flag nobody would
-  // ever check.
-  const handleStopSection = () => {
-    if (processingSection) {
-      stopRequestedRef.current = true
-      setStopRequested(true)
-      return
-    }
-    if (pauseRequested) {
-      pauseRequestedRef.current = false
-      setPauseRequested(false)
-      setSectionStopReason('stopped')
-    }
-  }
-
-  // The actual batch write action. Runs every NOT-YET-DONE listing in
-  // the section sequentially — full load → rewrite → GEO-format →
-  // create draft, exactly the single-listing pipeline below, just
-  // looped and without a per-listing review step (explicit, deliberate
-  // choice — this section-batch feature auto-creates real drafts with
-  // no review). Progress is recorded via /api/section-revamp-progress
-  // right after EACH listing (success or failure), not deferred to the
-  // end, so an interrupted run (tab closed, crash, or a deliberate
-  // Pause/Stop) resumes correctly — re-running this same function later
-  // skips everything already done. sectionResults updates after every
-  // listing too, for a truly live progress count.
-  const handleRevampSection = async () => {
-    if (!sectionInfo) return
-    setProcessingSection(true)
-    setSectionError('')
-    const alreadyDone = new Set(sectionResults.filter((r) => r.ok).map((r) => r.sourceListingId))
-    const remaining = sectionInfo.listingIds.filter((id) => !alreadyDone.has(id))
-    const results = sectionResults.slice()
-
-    for (let i = 0; i < remaining.length; i++) {
-      const sourceListingId = remaining[i]
-      let title = sourceListingId
-      try {
-        const loadResponse = await fetch('/api/load-listing', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-          body: JSON.stringify({ url: `https://www.etsy.com/listing/${sourceListingId}/` }),
-        })
-        const sourceListing = await loadResponse.json()
-        if (!loadResponse.ok) throw new Error(sourceListing.error || 'Failed to load this listing.')
-        title = sourceListing.title
-
-        const rewriteResponse = await fetch('/api/rewrite-listing', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-          body: JSON.stringify({
-            description: sourceListing.description,
-            // Same no-CSV fallback as Revamp My Listing — a section
-            // batch has no per-listing CSV to upload, so this is
-            // always the listing's own title/tags as keyword input.
-            keywords: [
-              { keyword: sourceListing.title },
-              ...sourceListing.tags.map((tag) => ({ keyword: tag })),
-            ],
-            taxonomyId: sourceListing.taxonomyId,
-          }),
-        })
-        const rewrite = await rewriteResponse.json()
-        if (!rewriteResponse.ok) throw new Error(rewrite.error || 'Failed to rewrite this listing.')
-
-        const description = formatGeoDescription(rewrite.body, rewrite.specs, rewrite.specLines, rewrite.faq)
-
-        // Same category-default / occasion-holiday-guess / balloon-
-        // property logic the single-listing Draft button already
-        // applies — "same rewrite rules" means these too, not just the
-        // title/tags/description generation.
-        const categoryDefaults = getCategoryDefaults(sourceListing.taxonomyId, null)
-        const whoMade = categoryDefaults?.whoMade ?? sourceListing.whoMade ?? 'i_did'
-        const isSupply = categoryDefaults?.isSupply ?? sourceListing.isSupply ?? false
-        const guesses = guessOccasionAndHoliday(sourceListing.title, sourceListing.description)
-        const material = detectBalloonMaterial({
-          materials: sourceListing.materials,
-          title: sourceListing.title,
-          description: sourceListing.description,
-        })
-        const properties = []
-        if (isKnownBalloonCategory(sourceListing.taxonomyId)) {
-          const materialProperty = material ? getMaterialProperty(sourceListing.taxonomyId, material) : null
-          if (materialProperty) properties.push(materialProperty)
-          if (guesses.occasion) {
-            properties.push({
-              propertyId: OCCASION_PROPERTY_ID,
-              valueIds: [guesses.occasion.id],
-              values: [guesses.occasion.name],
-            })
-          }
-          if (guesses.holiday) {
-            properties.push({
-              propertyId: HOLIDAY_PROPERTY_ID,
-              valueIds: [guesses.holiday.id],
-              values: [guesses.holiday.name],
-            })
-          }
-        }
-
-        const draftResponse = await fetch('/api/create-draft-listing', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-          body: JSON.stringify({
-            title: rewrite.title,
-            description,
-            tags: rewrite.tags,
-            quantity: sourceListing.quantity,
-            price: sourceListing.price,
-            whoMade,
-            whenMade: sourceListing.whenMade,
-            isSupply,
-            taxonomyId: sourceListing.taxonomyId,
-            shippingProfileId: sourceListing.shippingProfileId,
-            readinessStateId: sourceListing.readinessStateId,
-            itemWeight: sourceListing.itemWeight,
-            itemLength: sourceListing.itemLength,
-            itemWidth: sourceListing.itemWidth,
-            itemHeight: sourceListing.itemHeight,
-            itemWeightUnit: sourceListing.itemWeightUnit,
-            itemDimensionsUnit: sourceListing.itemDimensionsUnit,
-            // No manually-uploaded images here — there's no per-listing
-            // upload step in a section batch — but the source listing's
-            // own photos/video are carried over automatically below,
-            // same as the single-listing Draft flow. That's the whole
-            // point of automating this: the seller shouldn't have to
-            // re-add every image by hand across an entire section.
-            images: [],
-            sourceImages: sourceListing.images,
-            sourceVideo: sourceListing.video,
-            properties,
-          }),
-        })
-        const draft = await draftResponse.json()
-        if (!draftResponse.ok) throw new Error(draft.error || 'Failed to create this draft.')
-
-        await fetch('/api/section-revamp-progress', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-          body: JSON.stringify({
-            sectionId: sectionInfo.id,
-            sourceListingId,
-            draftListingId: draft.listingId,
-            status: 'done',
-          }),
-        }).catch(() => {})
-        results.push({ sourceListingId, title, ok: true, draftListingId: draft.listingId, url: draft.url })
-      } catch (err) {
-        await fetch('/api/section-revamp-progress', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-          body: JSON.stringify({ sectionId: sectionInfo.id, sourceListingId, status: 'failed', error: err.message }),
-        }).catch(() => {})
-        results.push({ sourceListingId, title, ok: false, error: err.message })
-      }
-      setSectionResults([...results])
-
-      // Stop wins over Pause if both were somehow requested — checked
-      // first, and sooner (per listing, not per cluster).
-      if (stopRequestedRef.current) {
-        setProcessingSection(false)
-        setSectionStopReason('stopped')
-        // The "stopping…" indicator's job is done now that the whole
-        // button cluster is about to change to the Resume button — but
-        // pauseRequested is deliberately left alone: if Stop was
-        // clicked while the Pause toggle was already showing "Resume"/
-        // highlighted, it should stay that way (still visually
-        // "paused"), not silently flip back to "Pause" underneath the
-        // now-hidden toggle button.
-        setStopRequested(false)
-        return
-      }
-      const atClusterBoundary = (i + 1) % SECTION_CLUSTER_SIZE === 0
-      if (atClusterBoundary && pauseRequestedRef.current) {
-        setProcessingSection(false)
-        setSectionStopReason('paused')
-        // pauseRequested stays true here, on purpose — the toggle
-        // button must STAY highlighted/"Resume" while actually paused,
-        // per the spec ("stays that way while paused").
-        return
-      }
-    }
-
-    // Ran to completion with nothing pending — nothing left to show as
-    // "requested."
-    setPauseRequested(false)
-    setStopRequested(false)
-    setProcessingSection(false)
-  }
 
   // Same pattern as handleLoadListing above, but against
   // /api/load-competitor-listing (no "must belong to your shop" check —
@@ -1158,15 +798,6 @@ function ListingRevamp({
     // next per-listing checkpoint and exit cleanly (same as a manual
     // Stop click) rather than continuing to run against state that was
     // just cleared out from under it.
-    stopRequestedRef.current = true
-    pauseRequestedRef.current = true
-    setSectionInfo(null)
-    setSectionResults([])
-    setProcessingSection(false)
-    setSectionError('')
-    setSectionStopReason(null)
-    setPauseRequested(false)
-    setStopRequested(false)
 
     setCsvFile(null)
     setParsingCsv(false)
@@ -1225,36 +856,6 @@ function ListingRevamp({
         description: `${draftHeader} ${draftBody}`,
       })
     : null
-  // Gates whether the multi-variation draft duplication controls show at
-  // all — material detection no longer decides WHICH categories are
-  // offered (every slot picks freely from MULTI_DRAFT_CATEGORIES), so an
-  // undetected material is no longer a dead end the way it used to be:
-  // any listing that looks balloon-related by title still gets the full
-  // manual controls, not just a "couldn't determine material" note.
-  const looksLikeBalloonListing =
-    Boolean(detectedBalloonMaterial) || /balloon/i.test(listing?.title || '')
-
-  // Fetches this shop's real sections once, the first time the balloon
-  // controls become relevant — never on mount unconditionally, since most
-  // sessions never touch this feature. Sections are shop-wide (not
-  // per-listing), so this deliberately only ever runs once per session,
-  // not once per loaded listing.
-  useEffect(() => {
-    if (!looksLikeBalloonListing || shopSectionsFetchedRef.current) return
-    shopSectionsFetchedRef.current = true
-    setLoadingShopSections(true)
-    setShopSectionsError('')
-    fetch('/api/shop-sections', { headers: { 'x-app-password': password } })
-      .then(async (response) => {
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.error || 'Failed to load your shop sections.')
-        setShopSections(data.sections)
-      })
-      .catch((err) => setShopSectionsError(err.message))
-      .finally(() => setLoadingShopSections(false))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [looksLikeBalloonListing])
-
   // Materials/Occasion/Holiday for a single draft going to taxonomyId —
   // gated to the 4 categories this feature actually verified property
   // IDs/values for (isKnownBalloonCategory); anywhere else, these are
@@ -1277,101 +878,6 @@ function ListingRevamp({
     return properties
   }
 
-  // Resizes variationSlots to match a newly-typed count — 1-4 only, never
-  // defaulted; anything blank or out of range collapses back to no slots
-  // at all (nothing renders below the number field until it holds a
-  // real, valid count). Preserves whatever a slot already had selected
-  // when the count changes (e.g. typing 3 then 4 keeps slots 1-3 as they
-  // were and just appends a blank slot 4), rather than resetting
-  // everything on every keystroke.
-  const handleVariationCountChange = (rawValue) => {
-    setVariationCount(rawValue)
-    setBalloonDraftResults(null)
-    const parsed = Number(rawValue)
-    const valid = rawValue !== '' && Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_VARIATION_COUNT
-    if (!valid) {
-      setVariationSlots([])
-      return
-    }
-    setVariationSlots((prev) => {
-      const next = prev.slice(0, parsed)
-      while (next.length < parsed) next.push({ shopSectionId: '', taxonomyId: '' })
-      return next
-    })
-  }
-
-  // Shop Section and Etsy Category are independent per slot, on purpose
-  // — neither of these ever reads or sets the other, and neither is
-  // auto-filled from material detection. Each updater only ever touches
-  // its own field on its own slot.
-  const handleSlotShopSectionChange = (index, value) => {
-    setVariationSlots((prev) => prev.map((slot, i) => (i === index ? { ...slot, shopSectionId: value } : slot)))
-  }
-  const handleSlotCategoryChange = (index, value) => {
-    setVariationSlots((prev) => prev.map((slot, i) => (i === index ? { ...slot, taxonomyId: value } : slot)))
-  }
-
-  // Creates one draft per slot in variationSlots — same title/
-  // description/tags/quantity/price/shipping/readiness/dimensions
-  // carried over exactly like the single Draft button above, but each
-  // slot's own independently-chosen taxonomyId/shopSectionId and NO
-  // images (the seller adds distinct images per draft manually
-  // afterward, same reasoning as the single-draft flow's own
-  // image-upload step). who_made/is_supply are always the Balloons
-  // defaults (see BALLOON_FIELD_DEFAULTS) regardless of which category/
-  // section a given draft lands in — it's the same physical balloon
-  // supply product throughout, just filed under a different discovery
-  // path each time. Failures are per-slot so one rejected slot (e.g. a
-  // bad taxonomy_id) doesn't hide drafts that DID succeed.
-  const handleCreateBalloonCategoryDrafts = async () => {
-    if (!listing || variationSlots.length === 0) return
-    setCreatingBalloonDrafts(true)
-    setBalloonDraftResults(null)
-    const results = []
-    for (const slot of variationSlots) {
-      const taxonomyId = Number(slot.taxonomyId)
-      const category = MULTI_DRAFT_CATEGORIES.find((c) => c.taxonomyId === taxonomyId)
-      const section = slot.shopSectionId
-        ? shopSections.find((s) => String(s.id) === String(slot.shopSectionId))
-        : null
-      const label = `${category?.label ?? 'Unknown category'} → ${section ? section.title : 'No section'}`
-      try {
-        const response = await fetch('/api/create-draft-listing', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-          body: JSON.stringify({
-            title: draftTitle,
-            description: `${draftHeader} ${draftBody}`,
-            tags: draftTags,
-            quantity: Number(draftQuantity),
-            price: Number(draftPrice),
-            whoMade: BALLOON_FIELD_DEFAULTS.whoMade,
-            whenMade: listing.whenMade,
-            isSupply: BALLOON_FIELD_DEFAULTS.isSupply,
-            taxonomyId,
-            shopSectionId: slot.shopSectionId ? Number(slot.shopSectionId) : null,
-            shippingProfileId: listing.shippingProfileId,
-            readinessStateId: listing.readinessStateId,
-            itemWeight: listing.itemWeight,
-            itemLength: listing.itemLength,
-            itemWidth: listing.itemWidth,
-            itemHeight: listing.itemHeight,
-            itemWeightUnit: listing.itemWeightUnit,
-            itemDimensionsUnit: listing.itemDimensionsUnit,
-            images: [],
-            properties: buildBalloonProperties(taxonomyId),
-          }),
-        })
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.error || 'Failed to create this draft.')
-        results.push({ label, ok: true, listingId: data.listingId, url: data.url })
-      } catch (err) {
-        results.push({ label, ok: false, error: err.message })
-      }
-    }
-    setBalloonDraftResults(results)
-    setCreatingBalloonDrafts(false)
-  }
 
   return (
     <section id="listing-revamp-page">
@@ -1496,123 +1002,6 @@ function ListingRevamp({
         </div>
       )}
 
-      {sectionError && <p className="error">{sectionError}</p>}
-
-      {sectionInfo &&
-        (() => {
-          const doneCount = sectionResults.filter((r) => r.ok).length
-          const totalCount = sectionInfo.activeListingCount
-          const remainingCount = totalCount - doneCount
-          return (
-            <div className="result result-white">
-              <div className="result-section">
-                <h2>Section: {sectionInfo.title}</h2>
-                <p className="subhead">
-                  {totalCount} active listing{totalCount === 1 ? '' : 's'} —{' '}
-                  {doneCount} already revamped, {remainingCount} remaining.
-                </p>
-                <div className="draft-actions">
-                  {!processingSection && !pauseRequested && (
-                    <button
-                      type="button"
-                      className="revamp-button"
-                      onClick={handlePlaySection}
-                      disabled={remainingCount === 0}
-                    >
-                      {remainingCount === 0
-                        ? 'Entire section already revamped'
-                        : sectionStopReason
-                          ? `Resume (${remainingCount} listing${remainingCount === 1 ? '' : 's'} left)`
-                          : `Revamp Entire Section (${remainingCount} listing${remainingCount === 1 ? '' : 's'})`}
-                    </button>
-                  )}
-                  {(processingSection || pauseRequested) && (
-                    <>
-                      <button
-                        type="button"
-                        className={`revamp-button${pauseRequested ? ' pressed-button' : ''}`}
-                        onClick={handleTogglePauseSection}
-                      >
-                        {pauseRequested ? 'Resume' : 'Pause'}
-                      </button>
-                      <button
-                        type="button"
-                        className={`revamp-button${stopRequested ? ' pressed-button' : ' secondary-button'}`}
-                        onClick={handleStopSection}
-                        disabled={stopRequested && processingSection}
-                      >
-                        {stopRequested && processingSection ? 'Stopping…' : 'Stop'}
-                      </button>
-                    </>
-                  )}
-                </div>
-                <p className="subhead">
-                  Creates a real DRAFT for every listing automatically — no per-listing review
-                  step. Safe to close this tab and come back later: re-loading this same section
-                  will skip anything already done and pick up where it left off.
-                </p>
-                {processingSection && !pauseRequested && (
-                  <p className="subhead">
-                    Revamping… ({doneCount} of {totalCount} done). Pause stops after the current
-                    cluster of {SECTION_CLUSTER_SIZE} finishes; Stop ends the run after the
-                    current listing — either way, nothing already drafted is undone.
-                  </p>
-                )}
-                {processingSection && pauseRequested && (
-                  <p className="guessed-badge">
-                    Pausing after this cluster finishes — {doneCount} of {totalCount} done so far.
-                    Click Resume again to cancel and keep going.
-                  </p>
-                )}
-                {!processingSection && sectionStopReason === 'paused' && (
-                  <p className="guessed-badge">
-                    Paused — {doneCount} of {totalCount} done. Click Resume to continue with the
-                    next cluster.
-                  </p>
-                )}
-                {!processingSection && sectionStopReason === 'stopped' && (
-                  <p className="guessed-badge">
-                    Stopped — {doneCount} of {totalCount} done. Everything already drafted stays
-                    as-is; click Resume to continue.
-                  </p>
-                )}
-                {!processingSection &&
-                  !sectionStopReason &&
-                  !pauseRequested &&
-                  remainingCount === 0 &&
-                  sectionResults.length > 0 && (
-                    <p className="draft-success">
-                      Done — all {totalCount} listings in this section now have drafts.
-                    </p>
-                  )}
-                {sectionResults.length > 0 && (
-                  <ul className="draft-image-errors">
-                    {sectionResults.map((result) => (
-                      <li
-                        key={result.sourceListingId}
-                        className={result.ok ? 'draft-success' : 'error'}
-                      >
-                        {result.title || result.sourceListingId}
-                        {result.alreadyDone ? ' (already done)' : ''}:{' '}
-                        {result.ok ? (
-                          result.url ? (
-                            <a href={result.url} target="_blank" rel="noreferrer">
-                              draft created
-                            </a>
-                          ) : (
-                            'draft created previously'
-                          )
-                        ) : (
-                          result.error
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-          )
-        })()}
 
       {competitorError && <p className="error">{competitorError}</p>}
 
@@ -2047,23 +1436,15 @@ function ListingRevamp({
                     }}
                   />
 
+                  {/* The manual "Draft" button was removed — creating
+                      drafts now has exactly one entry point, the
+                      "Rewrite My Etsy Drafts" button on the Dashboard.
+                      handleCreateDraft itself is deliberately KEPT: the
+                      Dashboard's own "Revamp Now" task still calls it
+                      programmatically at the end of its auto-run chain
+                      (see the autoRevampStage effects above), so
+                      deleting it would break that task. */}
                   <div className="draft-actions">
-                    <button
-                      type="button"
-                      className="revamp-button"
-                      onClick={handleCreateDraft}
-                      disabled={
-                        creatingDraft ||
-                        !draftTitle.trim() ||
-                        draftTags.length === 0 ||
-                        !draftQuantity ||
-                        !draftPrice ||
-                        !draftTaxonomyId
-                      }
-                    >
-                      {creatingDraft ? 'Creating Draft…' : 'Draft'}
-                    </button>
-
                     <button
                       type="button"
                       className="revamp-button update-listing-button"
@@ -2164,111 +1545,6 @@ function ListingRevamp({
                       )
                     })()}
 
-                  {listing && looksLikeBalloonListing && (
-                    <div className="field balloon-category-drafts">
-                      <p className="subhead">
-                        Creates one new draft per variation below, using the title/tags/description
-                        above (who made it / what is it set the same as Balloons on every one). No
-                        images are attached; add distinct photos to each draft afterward.
-                      </p>
-
-                      <div className="field">
-                        <label htmlFor="variation-count">Number of variations (1-4)</label>
-                        <input
-                          id="variation-count"
-                          type="number"
-                          min="1"
-                          max={MAX_VARIATION_COUNT}
-                          step="1"
-                          value={variationCount}
-                          onChange={(event) => handleVariationCountChange(event.target.value)}
-                          placeholder="How many drafts?"
-                        />
-                        {variationCount !== '' && variationSlots.length === 0 && (
-                          <p className="error">Enter a whole number from 1 to {MAX_VARIATION_COUNT}.</p>
-                        )}
-                      </div>
-
-                      {shopSectionsError && <p className="error">{shopSectionsError}</p>}
-
-                      {variationSlots.map((slot, index) => (
-                        <div className="variation-slot" key={index}>
-                          <h3>Variation {index + 1}</h3>
-                          <div className="field">
-                            <label htmlFor={`variation-section-${index}`}>Shop Section</label>
-                            <select
-                              id={`variation-section-${index}`}
-                              value={slot.shopSectionId}
-                              onChange={(event) => handleSlotShopSectionChange(index, event.target.value)}
-                              disabled={loadingShopSections}
-                            >
-                              <option value="">No section</option>
-                              {shopSections.map((section) => (
-                                <option key={section.id} value={section.id}>
-                                  {section.title}
-                                </option>
-                              ))}
-                            </select>
-                            {loadingShopSections && (
-                              <p className="subhead">Loading your shop sections…</p>
-                            )}
-                          </div>
-                          <div className="field">
-                            <label htmlFor={`variation-category-${index}`}>Etsy Category</label>
-                            <select
-                              id={`variation-category-${index}`}
-                              value={slot.taxonomyId}
-                              onChange={(event) => handleSlotCategoryChange(index, event.target.value)}
-                            >
-                              <option value="">Select a category…</option>
-                              {MULTI_DRAFT_CATEGORIES.map((category) => (
-                                <option key={category.taxonomyId} value={category.taxonomyId}>
-                                  {category.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-                      ))}
-
-                      {variationSlots.length > 0 && (
-                        <button
-                          type="button"
-                          className="revamp-button"
-                          onClick={handleCreateBalloonCategoryDrafts}
-                          disabled={
-                            creatingBalloonDrafts ||
-                            !draftTitle.trim() ||
-                            draftTags.length === 0 ||
-                            !draftQuantity ||
-                            !draftPrice ||
-                            variationSlots.some((slot) => !slot.taxonomyId)
-                          }
-                        >
-                          {creatingBalloonDrafts
-                            ? 'Creating drafts…'
-                            : `Create ${variationSlots.length} Draft${variationSlots.length === 1 ? '' : 's'}`}
-                        </button>
-                      )}
-
-                      {balloonDraftResults && (
-                        <ul className="draft-image-errors">
-                          {balloonDraftResults.map((result, index) => (
-                            <li key={index} className={result.ok ? 'draft-success' : 'error'}>
-                              {result.label}:{' '}
-                              {result.ok ? (
-                                <a href={result.url} target="_blank" rel="noreferrer">
-                                  draft created
-                                </a>
-                              ) : (
-                                result.error
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
             )

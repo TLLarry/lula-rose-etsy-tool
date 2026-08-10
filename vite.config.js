@@ -67,7 +67,11 @@ import {
   createThemeKeywordsHandler,
   createThemePreviewHandler,
 } from './server/themeKeywordBank.js'
-import { createDraftsListHandler, createDraftRewriteHandler } from './server/etsyDrafts.js'
+import {
+  createDraftsListHandler,
+  createDraftRewriteHandler,
+  createRewriteAllDraftsHandler,
+} from './server/etsyDrafts.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
 import {
   createShopReviewHandler,
@@ -131,6 +135,7 @@ function etsyTitleWriterPlugin(env) {
       server.middlewares.use('/api/theme-keywords', createThemeKeywordsHandler(env, passwordsMatch))
       server.middlewares.use('/api/etsy-drafts', createDraftsListHandler(env, passwordsMatch))
       server.middlewares.use('/api/draft-rewrite', createDraftRewriteHandler(env, passwordsMatch))
+      server.middlewares.use('/api/rewrite-all-drafts', createRewriteAllDraftsHandler(env, passwordsMatch))
       server.middlewares.use('/api/update-listing', updateListingHandler(env, passwordsMatch))
       server.middlewares.use(
         '/api/etsy-taxonomy',

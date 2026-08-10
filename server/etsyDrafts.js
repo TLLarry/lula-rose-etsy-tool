@@ -343,10 +343,108 @@ function createDraftRewriteHandler(env, passwordsMatch) {
   }
 }
 
+// One press of the Dashboard button processes at most this many drafts.
+// Each draft costs two model calls plus its photo downloads, so an
+// unbounded run over a large draft pile would take many minutes and a
+// lot of tokens with no way to see progress. Anything left over is
+// reported back so the seller can simply press again.
+const MAX_DRAFTS_PER_RUN = 25
+
+// POST /api/rewrite-all-drafts — the single Dashboard entry point.
+//
+// Sequential on purpose, not parallel: Etsy rate-limits per second (the
+// reason fetchEtsyApi exists at all), and a burst of concurrent
+// rewrites is exactly the pattern that tripped it before.
+//
+// Per-draft failures are isolated — one bad draft reports its error and
+// the run carries on, so a single problem can't cost the whole batch.
+// Drafts are always written back; this button's whole purpose is to
+// leave the result sitting in Etsy for review, so there is no preview
+// mode here (POST /api/draft-rewrite still has one for a single draft).
+function createRewriteAllDraftsHandler(env, passwordsMatch) {
+  return async (req, res) => {
+    res.setHeader('Content-Type', 'application/json')
+    if (!checkAppPassword(req, res, env, passwordsMatch)) return
+    try {
+      if (req.method !== 'POST') {
+        res.statusCode = 405
+        res.end(JSON.stringify({ error: 'Method Not Allowed' }))
+        return
+      }
+      assertConfigured(env)
+
+      const { total, drafts } = await fetchDraftListings(env, { limit: MAX_DRAFTS_PER_RUN })
+      if (drafts.length === 0) {
+        res.end(
+          JSON.stringify({
+            ok: true,
+            total: 0,
+            processed: 0,
+            succeeded: 0,
+            failed: 0,
+            remaining: 0,
+            results: [],
+          })
+        )
+        return
+      }
+
+      const results = []
+      for (const draft of drafts) {
+        try {
+          const rewrite = await buildDraftRewrite(env, draft.listingId)
+          await updateEtsyListing(env, draft.listingId, {
+            title: rewrite.title,
+            description: rewrite.description,
+            tags: rewrite.tags,
+          })
+          results.push({
+            listingId: draft.listingId,
+            ok: true,
+            previousTitle: draft.placeholderTitle,
+            title: rewrite.title,
+            tagCount: rewrite.tags.length,
+            photosUsed: rewrite.photosUsed,
+            themeBank: rewrite.themeBank,
+          })
+        } catch (err) {
+          results.push({
+            listingId: draft.listingId,
+            ok: false,
+            previousTitle: draft.placeholderTitle,
+            error: err.message,
+          })
+        }
+      }
+
+      const succeeded = results.filter((r) => r.ok).length
+      res.end(
+        JSON.stringify({
+          ok: true,
+          total,
+          processed: results.length,
+          succeeded,
+          failed: results.length - succeeded,
+          // Non-zero only when the shop has more drafts than one run
+          // handles — surfaced so "press again" is an obvious next step
+          // rather than the seller assuming everything was covered.
+          remaining: Math.max(0, total - results.length),
+          results,
+        })
+      )
+    } catch (err) {
+      res.statusCode = err.status || 500
+      res.end(JSON.stringify({ error: err.message }))
+    }
+  }
+}
+
 export {
   fetchDraftListings,
   fetchDraftListing,
   buildDraftRewrite,
+  createRewriteAllDraftsHandler,
+  MAX_DRAFTS_PER_RUN,
   assembleDraftDescription,
   buildSellerBlockParagraph,
   createDraftsListHandler,
