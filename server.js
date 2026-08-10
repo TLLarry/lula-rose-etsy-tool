@@ -75,6 +75,10 @@ import {
   createDraftRewriteHandler,
   createRewriteAllDraftsHandler,
 } from './server/etsyDrafts.js'
+import {
+  createWeeklyDashboardHandler,
+  createRunWeeklyDashboardHandler,
+} from './server/weeklyDashboard.js'
 import { createKeywordBankHandler, createKeywordBankKeywordHandler } from './server/keywordBank.js'
 import {
   createShopReviewHandler,
@@ -152,6 +156,8 @@ app.use('/api/theme-keywords', createThemeKeywordsHandler(env, passwordsMatch))
 app.use('/api/etsy-drafts', createDraftsListHandler(env, passwordsMatch))
 app.use('/api/draft-rewrite', createDraftRewriteHandler(env, passwordsMatch))
 app.use('/api/rewrite-all-drafts', createRewriteAllDraftsHandler(env, passwordsMatch))
+app.use('/api/run-weekly-dashboard', createRunWeeklyDashboardHandler(env, passwordsMatch))
+app.use('/api/weekly-dashboard', createWeeklyDashboardHandler(env, passwordsMatch))
 app.use('/api/update-listing', updateListingHandler(env, passwordsMatch))
 app.use('/api/etsy-taxonomy', createEtsyTaxonomyHandler(env, passwordsMatch))
 app.use('/api/parse-listing-csv', createParseListingCsvHandler(env, passwordsMatch))

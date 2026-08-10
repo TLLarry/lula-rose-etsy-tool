@@ -28,24 +28,17 @@ function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
   const [dismissingTaskKey, setDismissingTaskKey] = useState(null)
   const [taskActionError, setTaskActionError] = useState('')
 
-  const [topSellers, setTopSellers] = useState([])
-  const [minUnitsThreshold, setMinUnitsThreshold] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  const [thresholdInput, setThresholdInput] = useState('')
-  const [savingThreshold, setSavingThreshold] = useState(false)
-  const [thresholdError, setThresholdError] = useState('')
-
-  const [traffic, setTraffic] = useState(null)
-  const [trafficLoading, setTrafficLoading] = useState(true)
-  const [trafficError, setTrafficError] = useState('')
+  // The Monday report. One fetch feeds the traffic, sales, top-performer
+  // and seasonal sections — they're all views onto the same stored
+  // snapshot, so they can never disagree with each other.
+  const [weekly, setWeekly] = useState(null)
+  const [weeklyLoading, setWeeklyLoading] = useState(true)
+  const [weeklyError, setWeeklyError] = useState('')
 
   const [ideas, setIdeas] = useState([])
   const [ideasLoading, setIdeasLoading] = useState(true)
   const [ideasError, setIdeasError] = useState('')
 
-  const [weeklyIncome, setWeeklyIncome] = useState(null)
   // Session-only — dismissing an idea just hides it from THIS view of
   // the list, it doesn't delete or persist anything server-side. Ideas
   // are recomputed fresh from current competitor data on every load, so
@@ -193,47 +186,26 @@ function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
     handleCompleteTask(task)
   }
 
-  const loadTopSellers = () => {
-    setLoading(true)
-    setError('')
-    fetch('/api/top-sellers', { headers: { 'x-app-password': password } })
-      .then(async (response) => {
-        const body = await response.json()
-        if (!response.ok) throw new Error(body.error || 'Failed to load top sellers.')
-        return body
-      })
-      .then((body) => {
-        setTopSellers(body.listings)
-        setMinUnitsThreshold(body.minUnitsThreshold)
-        setThresholdInput(String(body.minUnitsThreshold))
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => {
-    loadTopSellers()
-    // Only run once on mount — saving a new threshold below re-fires this
-    // explicitly via handleSaveThreshold instead of this re-running.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
+  // Reads the stored Monday report only — never generates one. The
+  // weekly cron is the single writer, so what you read on Friday is
+  // exactly what you read on Monday rather than silently drifting as
+  // the week's data lands.
   useEffect(() => {
     let cancelled = false
-    fetch('/api/traffic-breakdown', { headers: { 'x-app-password': password } })
+    fetch('/api/weekly-dashboard', { headers: { 'x-app-password': password } })
       .then(async (response) => {
         const body = await response.json()
-        if (!response.ok) throw new Error(body.error || 'Failed to load traffic.')
+        if (!response.ok) throw new Error(body.error || 'Failed to load this week’s report.')
         return body
       })
       .then((body) => {
-        if (!cancelled) setTraffic(body)
+        if (!cancelled) setWeekly(body.report)
       })
       .catch((err) => {
-        if (!cancelled) setTrafficError(err.message)
+        if (!cancelled) setWeeklyError(err.message)
       })
       .finally(() => {
-        if (!cancelled) setTrafficLoading(false)
+        if (!cancelled) setWeeklyLoading(false)
       })
     return () => {
       cancelled = true
@@ -262,48 +234,6 @@ function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
     }
   }, [password])
 
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/weekly-report', { headers: { 'x-app-password': password } })
-      .then(async (response) => {
-        const body = await response.json()
-        if (!response.ok) throw new Error(body.error || 'Failed to load income data.')
-        return body
-      })
-      .then((body) => {
-        if (!cancelled) setWeeklyIncome(body.report)
-      })
-      .catch(() => {
-        // Non-fatal — the income tiles just stay at their loading dashes.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [password])
-
-  const handleSaveThreshold = async () => {
-    const value = Number(thresholdInput)
-    if (!Number.isInteger(value) || value < 0) {
-      setThresholdError('Enter a whole number, 0 or higher.')
-      return
-    }
-    setSavingThreshold(true)
-    setThresholdError('')
-    try {
-      const response = await fetch('/api/app-settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-app-password': password },
-        body: JSON.stringify({ key: 'top_seller_min_units_30d', value }),
-      })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Failed to save that threshold.')
-      loadTopSellers()
-    } catch (err) {
-      setThresholdError(err.message)
-    } finally {
-      setSavingThreshold(false)
-    }
-  }
 
   // The one manual draft-rewrite action. No confirm step: it only ever
   // edits drafts (never a live listing) and never publishes, so the
@@ -501,136 +431,102 @@ function Dashboard({ password, onRevampTask, onCreateSimilarListing }) {
         })()}
       </div>
 
-      <div className="dashboard-row summary-cards">
-        <div className="summary-card">
-          <p className="summary-card-label">Visitors This Week</p>
-          <p className="summary-card-value">{weeklyIncome?.hasData ? weeklyIncome.viewsGained : '—'}</p>
-        </div>
-        <div className="summary-card">
-          <p className="summary-card-label">Weekly Conversion Rate</p>
-          <p className="summary-card-value">
-            {weeklyIncome?.hasData && weeklyIncome.conversionRate != null
-              ? `${(weeklyIncome.conversionRate * 100).toFixed(1)}%`
-              : '—'}
-          </p>
-          <p className="summary-card-note">Units sold ÷ views, vs. Etsy's ~2% benchmark</p>
-        </div>
-      </div>
+      {/* ---- Monday report: traffic, sales, top performers, season ----
+          These four replace what used to be five separate number boxes
+          (Visitors This Week, Weekly Conversion Rate, Units Sold, Weekly
+          Gross Sales, Avg Sale Value) plus the Traffic list. Every one
+          renders a "what it means" and a "what to do" line straight from
+          the report — the interpretation is computed server-side in
+          weeklyDashboard.js so it's identical wherever it's read. */}
+      {weeklyError && <p className="error">{weeklyError}</p>}
+      {weeklyLoading && <p className="subhead">Loading this week’s report…</p>}
 
-      <div className="dashboard-row summary-cards">
-        <div className="summary-card">
-          <p className="summary-card-label">Units Sold This Week</p>
-          <p className="summary-card-value">{weeklyIncome?.hasData ? weeklyIncome.unitsSold : '—'}</p>
-        </div>
-        <div className="summary-card">
-          <p className="summary-card-label">Weekly Gross Sales</p>
-          <p className="summary-card-value">
-            {weeklyIncome?.hasData ? formatMoney(weeklyIncome.grossSalesCents) : '—'}
-          </p>
-        </div>
-        <div className="summary-card">
-          <p className="summary-card-label">Avg Sale Value</p>
-          <p className="summary-card-value">
-            {weeklyIncome?.hasData && weeklyIncome.avgSaleValueCents != null
-              ? formatMoney(weeklyIncome.avgSaleValueCents)
-              : '—'}
-          </p>
-          <p className="summary-card-note">
-            Not "Net Sales" — Etsy fees aren't tracked yet, so this is gross revenue only.
-          </p>
-        </div>
-      </div>
-
-      <div className="dashboard-row dashboard-performers-row">
+      {!weeklyLoading && !weeklyError && !weekly && (
         <div className="dashboard-performers-box">
-          <h2>Top 3 Performing Listings</h2>
-          <p className="subhead">Ranked by units sold in the last 30 days.</p>
+          <h2>This Week’s Report</h2>
+          <p className="subhead">
+            No report yet. It’s generated automatically every Monday at 12:01am Arizona time and
+            covers the week before, so the first one appears after the next Monday.
+          </p>
+        </div>
+      )}
 
-          {error && <p className="error">{error}</p>}
-          {loading && <p className="subhead">Loading…</p>}
+      {!weeklyLoading && weekly && (
+        <>
+          <p className="subhead dashboard-report-period">
+            Week of {weekly.weekStart} to {weekly.weekEnd} · refreshed automatically every Monday
+          </p>
 
-          {!loading && !error && topSellers.length === 0 && (
-            <p className="subhead">
-              No listings have sold more than {minUnitsThreshold} unit
-              {minUnitsThreshold === 1 ? '' : 's'} in the last 30 days yet.
-            </p>
-          )}
+          <div className="dashboard-performers-box">
+            <h2>Traffic &amp; Visitors</h2>
+            <p className="dashboard-metric-headline">{weekly.traffic.meaning}</p>
+            <p className="subhead">{weekly.traffic.action}</p>
+            <p className="subhead">{weekly.traffic.conversionLine}</p>
 
-          {!loading && topSellers.length > 0 && (
-            <div className="top-seller-cards">
-              {topSellers.map((listing) => (
-                <div className="top-seller-card" key={listing.listingId}>
-                  {listing.thumbnailUrl && (
-                    <img
-                      className="top-seller-thumb"
-                      src={listing.thumbnailUrl}
-                      alt={listing.title}
-                    />
-                  )}
-                  <div className="top-seller-info">
-                    <p className="top-seller-title">{listing.title}</p>
-                    <p className="subhead">
-                      {listing.unitsSold30d} unit{listing.unitsSold30d === 1 ? '' : 's'} sold
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="top-seller-threshold">
-            <label htmlFor="top-seller-threshold-input">
-              Minimum units sold (30 days) to qualify
-            </label>
-            <div className="top-seller-threshold-row">
-              <input
-                id="top-seller-threshold-input"
-                type="number"
-                min="0"
-                step="1"
-                value={thresholdInput}
-                onChange={(event) => setThresholdInput(event.target.value)}
-              />
-              <button
-                type="button"
-                className="top-seller-threshold-save"
-                onClick={handleSaveThreshold}
-                disabled={savingThreshold}
-              >
-                {savingThreshold ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-            {thresholdError && <p className="error">{thresholdError}</p>}
+            {weekly.traffic.listings.length > 0 && (
+              <ul className="dashboard-performer-list">
+                {weekly.traffic.listings.map((listing) => (
+                  <li key={listing.listingId} className="dashboard-traffic-row">
+                    <span>{listing.title}</span>
+                    <span className="dashboard-traffic-count">
+                      {listing.priorViews} → {listing.views} views
+                      {listing.changeLabel ? ` (${listing.changeLabel})` : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-        </div>
 
-        <div className="dashboard-performers-box">
-          <h2>Traffic</h2>
-          <p className="subhead">Views this week vs. last week, per listing — ranked by this week's views.</p>
+          <div className="dashboard-performers-box">
+            <h2>Sales</h2>
+            <p className="dashboard-metric-headline">{weekly.sales.meaning}</p>
+            <p className="subhead">{weekly.sales.action}</p>
+            <p className="subhead">{weekly.sales.note}</p>
+          </div>
 
-          {trafficError && <p className="error">{trafficError}</p>}
-          {trafficLoading && <p className="subhead">Loading…</p>}
+          <div className="dashboard-performers-box">
+            <h2>Top Performing Listings</h2>
+            <p className="dashboard-metric-headline">{weekly.topPerformers.meaning}</p>
+            <p className="subhead">{weekly.topPerformers.action}</p>
 
-          {!trafficLoading && !trafficError && (!traffic || traffic.listings.length === 0) && (
-            <p className="subhead">No traffic tracked yet — check back once your Etsy account has synced.</p>
-          )}
+            {weekly.topPerformers.listings.length > 0 && (
+              <div className="top-seller-cards">
+                {weekly.topPerformers.listings.map((listing) => (
+                  <div className="top-seller-card" key={listing.listingId}>
+                    {listing.thumbnailUrl && (
+                      <img className="top-seller-thumb" src={listing.thumbnailUrl} alt={listing.title} />
+                    )}
+                    <div className="top-seller-info">
+                      <p className="top-seller-title">{listing.title}</p>
+                      <p className="subhead">
+                        {listing.unitsSold} unit{listing.unitsSold === 1 ? '' : 's'} sold ·{' '}
+                        {listing.viewsGained} views
+                      </p>
+                      <p className="subhead">{listing.keywordVerdict}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-          {!trafficLoading && traffic && traffic.listings.length > 0 && (
+          <div className="dashboard-performers-box">
+            <h2>Season &amp; What To Prepare</h2>
+            <p className="dashboard-metric-headline">{weekly.season.meaning}</p>
             <ul className="dashboard-performer-list">
-              {traffic.listings.slice(0, 8).map((listing) => (
-                <li key={listing.listingId} className="dashboard-traffic-row">
-                  <span>{listing.title}</span>
-                  <span className="dashboard-traffic-count">
-                    {listing.viewsLastWeek} → {listing.viewsThisWeek} views
-                    {listing.percentChange != null &&
-                      ` (${listing.percentChange >= 0 ? '+' : ''}${(listing.percentChange * 100).toFixed(0)}%)`}
-                  </span>
-                </li>
+              {weekly.season.todo.map((item, index) => (
+                <li key={index}>{item}</li>
               ))}
             </ul>
-          )}
-        </div>
-      </div>
+            <p className="subhead">
+              Deadlines assume a new listing needs about {weekly.season.leadDays} days to start
+              ranking in Etsy search.
+            </p>
+          </div>
+        </>
+      )}
+
 
       <div className="dashboard-performers-box">
         <h2>Trends</h2>

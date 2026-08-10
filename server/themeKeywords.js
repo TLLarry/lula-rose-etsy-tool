@@ -226,9 +226,78 @@ function buildThemeKeywordsParagraph(selection) {
   return parts.join(' ')
 }
 
+// An Etsy listing does not rank the day it goes live — it needs weeks of
+// impressions before it settles into search. So the useful question on a
+// dashboard is never "what holiday is it today", it's "what should
+// already be listed by now to be ranking when the money arrives". This
+// is the lead time that turns a peak date into a deadline.
+const LISTING_LEAD_DAYS = 45
+
+// Calendar quarter for a date, in the same Q1-Q4 shape the rest of the
+// app uses (see quarterRollup.js).
+function quarterForMonthDay(monthDay) {
+  const month = Number(monthDay.split('-')[0])
+  return `Q${Math.floor((month - 1) / 3) + 1}`
+}
+
+// What's happening seasonally right now and what's next, with the dates
+// turned into deadlines rather than trivia. Pure calendar + bank data:
+// no shop stats, so this works on day one with an empty database.
+function buildSeasonalOutlook(today = new Date()) {
+  const monthDay = toMonthDay(today)
+  const banks = getThemeBanks()
+  const seasons = banks.filter((b) => b.kind === 'season')
+  const holidays = banks.filter((b) => b.kind === 'holiday')
+
+  const currentSeason = seasons.find((b) => isWithinWindow(monthDay, b.windowStart, b.windowEnd)) || null
+  // The season that starts soonest and isn't the one we're in.
+  const nextSeason = seasons
+    .filter((b) => b !== currentSeason)
+    .map((b) => ({ bank: b, inDays: daysUntil(monthDay, b.windowStart) }))
+    .sort((a, b) => a.inDays - b.inDays)[0] || null
+
+  const ranked = holidays
+    .map((bank) => {
+      const active = isWithinWindow(monthDay, bank.windowStart, bank.windowEnd)
+      return {
+        slug: bank.slug,
+        label: bank.label,
+        active,
+        // Days until the selling window opens (0 once it's open).
+        opensInDays: active ? 0 : daysUntil(monthDay, bank.windowStart),
+        peakInDays: bank.peak ? daysUntil(monthDay, bank.peak) : null,
+        // Negative means the listing deadline has already passed —
+        // anything new now is late, which is worth saying out loud
+        // rather than hiding.
+        listByInDays: bank.peak ? daysUntil(monthDay, bank.peak) - LISTING_LEAD_DAYS : null,
+        topKeywords: bank.keywords.slice(0, 8).map((k) => k.keyword),
+      }
+    })
+    .sort((a, b) => (a.peakInDays ?? 999) - (b.peakInDays ?? 999))
+
+  return {
+    date: monthDay,
+    quarter: quarterForMonthDay(monthDay),
+    leadDays: LISTING_LEAD_DAYS,
+    currentSeason: currentSeason && { slug: currentSeason.slug, label: currentSeason.label },
+    nextSeason: nextSeason && {
+      slug: nextSeason.bank.slug,
+      label: nextSeason.bank.label,
+      inDays: nextSeason.inDays,
+    },
+    active: ranked.filter((h) => h.active),
+    // Everything not yet open, nearest peak first. The dashboard shows
+    // only the first couple, but the whole ordered list is returned so
+    // the caller decides how far ahead to look.
+    upcoming: ranked.filter((h) => !h.active),
+  }
+}
+
 export {
   selectThemeKeywords,
   buildThemeKeywordsParagraph,
+  buildSeasonalOutlook,
+  LISTING_LEAD_DAYS,
   isWithinWindow,
   daysUntil,
   toMonthDay,

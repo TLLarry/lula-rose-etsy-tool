@@ -665,6 +665,12 @@ function getKeywordStats(month) {
   return db.prepare(`SELECT * FROM keyword_stats WHERE month = ? ORDER BY keyword`).all(month)
 }
 
+// Every month at once — the weekly dashboard needs month-over-month
+// direction per keyword, which a single-month query can't answer.
+function getAllKeywordStats() {
+  return db.prepare(`SELECT * FROM keyword_stats ORDER BY month, keyword`).all()
+}
+
 function listUploads() {
   return db.prepare(`SELECT * FROM uploads ORDER BY uploaded_at DESC`).all()
 }
@@ -1760,6 +1766,7 @@ export {
   saveListing,
   saveKeywordStats,
   getKeywordStats,
+  getAllKeywordStats,
   listUploads,
   saveUpload,
   getDbStatus,

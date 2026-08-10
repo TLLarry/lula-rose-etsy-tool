@@ -1,0 +1,49 @@
+# Regenerates the Monday dashboard report at 12:01am Phoenix time every
+# Monday, summarizing the week that just ended.
+#
+# 07:01 UTC == 00:01 America/Phoenix. Arizona does not observe daylight
+# saving, so unlike most US timezones this UTC offset is fixed at -7 all
+# year and the cron never needs seasonal adjustment — the same reasoning
+# nightly-sync.yml relies on.
+#
+# cron day-of-week 1 = Monday. The report deliberately covers the
+# PREVIOUS Monday-to-Sunday week (see lastCompleteWeek in
+# server/weeklyDashboard.js), so running a minute after midnight means
+# the week it describes is fully closed.
+#
+# Dashboard only: this writes the stored report and nothing else. No
+# email, no push, no daily run — the seller reads it when they log in.
+#
+# Reuses the same RENDER_APP_URL/CRON_SECRET repository secrets the other
+# two workflows already use; /api/run-weekly-dashboard accepts the same
+# x-cron-secret header.
+name: Weekly Dashboard Report
+
+on:
+  schedule:
+    - cron: '1 7 * * 1' # 12:01am Monday, Phoenix time
+  workflow_dispatch: {} # lets you regenerate it manually from the Actions tab
+
+jobs:
+  run-weekly-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      # Same no--f pattern as nightly-sync.yml: -f would hide the
+      # response body on an error, which is the one thing worth having.
+      # Status and body are captured separately, always printed, and the
+      # step fails manually for anything outside 200-299.
+      - name: Call /api/run-weekly-dashboard
+        env:
+          RENDER_APP_URL: ${{ secrets.RENDER_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          response=$(curl -s -w '\n%{http_code}' -X POST "${RENDER_APP_URL}/api/run-weekly-dashboard" \
+            -H "x-cron-secret: ${CRON_SECRET}")
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          echo "HTTP status: $http_code"
+          echo "Response body: $body"
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "Weekly dashboard generation failed."
+            exit 1
+          fi
