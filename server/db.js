@@ -24,6 +24,9 @@ import Database from 'better-sqlite3'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
+// Pure data, no imports of its own — so this cannot create a cycle even
+// though half the server imports db.js.
+import { ALL_THEME_BANKS } from './themeKeywordSeed.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -46,6 +49,7 @@ function ensureDbInitialized() {
   realDb = new Database(DB_PATH)
   realDb.pragma('journal_mode = WAL')
   initializeSchema(realDb)
+  seedMissingThemeBanks(realDb)
   return realDb
 }
 
@@ -94,6 +98,65 @@ const TABLE_NAMES = [
   'keyword_theme_keywords',
   'section_revamp_progress',
 ]
+
+// Fills in any theme keyword bank that doesn't exist yet, on every boot.
+//
+// Without this the banks only exist if someone remembers to POST
+// { action: 'seed' } to /api/theme-keywords by hand — and a missing
+// bank fails SILENTLY: buildThemeKeywordsParagraph just returns null,
+// so titles and tags quietly lose their seasonal keywords with no error
+// anywhere. A fresh clone, a new deploy, or a recreated database would
+// all hit that. Seeding here means the feature cannot be half-installed.
+//
+// Deliberately GAP-FILL only, keyed on slug: a bank that already exists
+// is left completely alone, so hand-edited weights and any keywords
+// added later survive every restart. Editing themeKeywordSeed.js and
+// wanting those edits applied to an EXISTING bank is the explicit
+// re-seed endpoint's job, not a silent boot-time overwrite.
+//
+// Takes the real instance for the same reason initializeSchema does —
+// it runs inside ensureDbInitialized(), before the proxy is usable.
+function seedMissingThemeBanks(realDbInstance) {
+  const existing = new Set(
+    realDbInstance.prepare(`SELECT slug FROM keyword_theme_banks`).all().map((row) => row.slug)
+  )
+  const missing = ALL_THEME_BANKS.filter((bank) => !existing.has(bank.slug))
+  if (missing.length === 0) return
+
+  const insertBank = realDbInstance.prepare(
+    `INSERT INTO keyword_theme_banks (kind, slug, label, window_start, window_end, peak)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  )
+  const insertKeyword = realDbInstance.prepare(
+    `INSERT INTO keyword_theme_keywords (bank_id, keyword, weight, tag_safe, source)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(bank_id, keyword) DO NOTHING`
+  )
+  const run = realDbInstance.transaction(() => {
+    for (const bank of missing) {
+      const result = insertBank.run(
+        bank.kind,
+        bank.slug,
+        bank.label,
+        bank.windowStart,
+        bank.windowEnd,
+        bank.peak ?? null
+      )
+      for (const entry of bank.keywords) {
+        const keyword = entry.keyword.trim()
+        if (!keyword) continue
+        insertKeyword.run(
+          result.lastInsertRowid,
+          keyword,
+          entry.weight ?? 1,
+          isTagSafeKeyword(keyword) ? 1 : 0,
+          'seed'
+        )
+      }
+    }
+  })
+  run()
+}
 
 // Safe to call on every boot — CREATE TABLE/INDEX IF NOT EXISTS is a no-op
 // once the schema already exists. Takes the real instance directly
